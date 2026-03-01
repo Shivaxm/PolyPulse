@@ -13,12 +13,13 @@ export default function Correlations() {
 
   const fetchPage = useCallback((pageNum: number) => {
     fetch(`/api/correlations/recent?page=${pageNum}&size=20`)
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : { content: [], last: true })
       .then((data: PagedResponse<CorrelationItem>) => {
+        const items = data.content || [];
         if (pageNum === 0) {
-          setCorrelations(data.content);
+          setCorrelations(items);
         } else {
-          setCorrelations(prev => [...prev, ...data.content]);
+          setCorrelations(prev => [...prev, ...items]);
         }
         setHasMore(!data.last);
         setLoading(false);
@@ -30,7 +31,6 @@ export default function Correlations() {
     fetchPage(0);
   }, [fetchPage]);
 
-  // Prepend live correlations
   useEffect(() => {
     if (liveCorrelations.length > 0) {
       setCorrelations(prev => {
@@ -43,51 +43,45 @@ export default function Correlations() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-400">Loading correlations...</div>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh', color: '#9ca3af' }}>
+        Loading correlations...
       </div>
     );
   }
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-white mb-4">Correlations Feed</h1>
+      <h1 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'white', marginBottom: '1rem' }}>Correlations Feed</h1>
 
       {correlations.length === 0 ? (
-        <p className="text-gray-500">No correlations detected yet. The engine is watching for news events that move markets.</p>
+        <p style={{ color: '#6b7280' }}>No correlations detected yet. The engine is watching for news events that move markets.</p>
       ) : (
-        <div className="space-y-3">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {correlations.map((c, idx) => (
-            <div
-              key={`${c.id}-${idx}`}
-              className="bg-gray-800 rounded-lg p-4 border border-gray-700 animate-fade-in"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
+            <div key={`${c.id}-${idx}`} style={{ background: '#1f2937', borderRadius: '0.5rem', padding: '1rem', border: '1px solid #374151' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ flex: 1 }}>
                   <div
-                    className="text-sm text-indigo-400 hover:text-indigo-300 cursor-pointer mb-1"
+                    style={{ fontSize: '0.875rem', color: '#818cf8', cursor: 'pointer', marginBottom: '0.25rem' }}
                     onClick={() => c.market && navigate(`/market/${c.market.id}`)}
                   >
                     {c.market?.question ?? 'Unknown market'}
                   </div>
-                  <div className="text-sm text-gray-300">
+                  <div style={{ fontSize: '0.875rem', color: '#d1d5db' }}>
                     {c.news?.headline ?? 'Unknown news event'}
                   </div>
-                  <div className="text-xs text-gray-500 mt-1">
+                  <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
                     {c.news?.source ?? ''} &middot; {new Date(c.detectedAt).toLocaleString()}
                   </div>
                 </div>
-                <div className="text-right ml-4 shrink-0">
-                  <div className={`text-sm font-mono font-bold ${c.priceDelta > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                <div style={{ textAlign: 'right', marginLeft: '1rem', flexShrink: 0 }}>
+                  <div style={{ fontSize: '0.875rem', fontFamily: 'monospace', fontWeight: 'bold', color: c.priceDelta > 0 ? '#34d399' : '#f87171' }}>
                     {c.priceDelta > 0 ? '+' : ''}{(c.priceDelta * 100).toFixed(1)}%
                   </div>
-                  <div className="w-16 bg-gray-700 rounded-full h-1.5 mt-1">
-                    <div
-                      className="bg-indigo-500 h-1.5 rounded-full"
-                      style={{ width: `${Math.min(c.confidence * 100, 100)}%` }}
-                    />
+                  <div style={{ width: '4rem', background: '#374151', borderRadius: '9999px', height: '0.375rem', marginTop: '0.25rem' }}>
+                    <div style={{ background: '#6366f1', height: '0.375rem', borderRadius: '9999px', width: `${Math.min(c.confidence * 100, 100)}%` }} />
                   </div>
-                  <div className="text-xs text-gray-500 mt-0.5">
+                  <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.125rem' }}>
                     {(c.confidence * 100).toFixed(0)}% conf
                   </div>
                 </div>
@@ -99,12 +93,8 @@ export default function Correlations() {
 
       {hasMore && (
         <button
-          onClick={() => {
-            const nextPage = page + 1;
-            setPage(nextPage);
-            fetchPage(nextPage);
-          }}
-          className="mt-4 w-full py-2 bg-gray-800 text-gray-400 rounded-lg hover:text-white hover:bg-gray-750 transition-colors text-sm"
+          onClick={() => { const next = page + 1; setPage(next); fetchPage(next); }}
+          style={{ marginTop: '1rem', width: '100%', padding: '0.5rem', background: '#1f2937', color: '#9ca3af', border: '1px solid #374151', borderRadius: '0.5rem', cursor: 'pointer', fontSize: '0.875rem' }}
         >
           Load more
         </button>

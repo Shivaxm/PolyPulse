@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { PriceUpdate, CorrelationItem } from '../types';
 
 interface EventStreamState {
@@ -13,21 +13,21 @@ export function useEventStream(url: string) {
     correlations: [],
     isConnected: false,
   });
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const mountedRef = useRef(true);
 
-  const connect = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
+  useEffect(() => {
+    mountedRef.current = true;
 
     const es = new EventSource(url);
-    eventSourceRef.current = es;
+    esRef.current = es;
 
     es.addEventListener('connected', () => {
-      setState(prev => ({ ...prev, isConnected: true }));
+      if (mountedRef.current) setState(prev => ({ ...prev, isConnected: true }));
     });
 
     es.addEventListener('price_update', (event) => {
+      if (!mountedRef.current) return;
       try {
         const update: PriceUpdate = JSON.parse(event.data);
         setState(prev => {
@@ -35,42 +35,38 @@ export function useEventStream(url: string) {
           newMap.set(update.marketId, update);
           return { ...prev, priceUpdates: newMap };
         });
-      } catch (e) {
-        // ignore parse errors
-      }
+      } catch { /* ignore */ }
     });
 
     es.addEventListener('correlation', (event) => {
+      if (!mountedRef.current) return;
       try {
         const correlation: CorrelationItem = JSON.parse(event.data);
         setState(prev => ({
           ...prev,
           correlations: [correlation, ...prev.correlations].slice(0, 50),
         }));
-      } catch (e) {
-        // ignore parse errors
-      }
+      } catch { /* ignore */ }
     });
 
     es.addEventListener('heartbeat', () => {
-      setState(prev => ({ ...prev, isConnected: true }));
+      if (mountedRef.current) setState(prev => ({ ...prev, isConnected: true }));
     });
 
     es.onopen = () => {
-      setState(prev => ({ ...prev, isConnected: true }));
+      if (mountedRef.current) setState(prev => ({ ...prev, isConnected: true }));
     };
 
     es.onerror = () => {
-      setState(prev => ({ ...prev, isConnected: false }));
+      if (mountedRef.current) setState(prev => ({ ...prev, isConnected: false }));
+    };
+
+    return () => {
+      mountedRef.current = false;
+      es.close();
+      esRef.current = null;
     };
   }, [url]);
-
-  useEffect(() => {
-    connect();
-    return () => {
-      eventSourceRef.current?.close();
-    };
-  }, [connect]);
 
   return state;
 }
