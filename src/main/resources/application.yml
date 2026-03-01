@@ -1,0 +1,45 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/polypulse}
+    username: ${DATABASE_USERNAME:polypulse}
+    password: ${DATABASE_PASSWORD:polypulse}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+logging:
+  level:
+    com.polypulse: INFO
+    root: INFO
+
+polypulse:
+  polymarket:
+    gamma-url: https://gamma-api.polymarket.com
+    clob-url: https://clob.polymarket.com
+    ws-url: wss://ws-subscriptions-clob.polymarket.com/ws/market
+  sync:
+    market-interval-ms: 300000
+  news:
+    api-key: ${NEWS_API_KEY:}
+    poll-interval-ms: 60000
+    provider: newsapi
+  correlation:
+    min-price-delta: 0.03
+    before-window-minutes: 10
+    after-window-minutes: 30
+    min-confidence: 0.5
+    max-candidate-markets: 20
+    recheck-delay-minutes: 30
