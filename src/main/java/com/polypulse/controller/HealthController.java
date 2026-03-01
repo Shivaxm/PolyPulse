@@ -1,8 +1,10 @@
 package com.polypulse.controller;
 
+import com.polypulse.repository.CorrelationRepository;
 import com.polypulse.repository.MarketRepository;
 import com.polypulse.service.IngestionMetrics;
 import com.polypulse.service.MarketSyncService;
+import com.polypulse.service.NewsIngestionService;
 import com.polypulse.service.PriceIngestionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +24,8 @@ public class HealthController {
     private final MarketSyncService marketSyncService;
     private final IngestionMetrics ingestionMetrics;
     private final PriceIngestionService priceIngestionService;
+    private final NewsIngestionService newsIngestionService;
+    private final CorrelationRepository correlationRepository;
 
     @GetMapping("/health")
     public Map<String, Object> health() {
@@ -36,6 +40,9 @@ public class HealthController {
         status.put("wsConnected", ingestionMetrics.isWsConnected());
         status.put("lastTickTimestamp", ingestionMetrics.getLastTickTimestamp());
         status.put("uptime", ingestionMetrics.getUptime().toSeconds() + "s");
+        status.put("newsEventsTotal", newsIngestionService.getTotalIngested());
+        status.put("lastNewsIngestedAt", newsIngestionService.getLastIngestedAt());
+        status.put("correlationsDetected", correlationRepository.count());
         status.put("timestamp", Instant.now());
         return status;
     }
