@@ -12,7 +12,6 @@ import com.polypulse.repository.MarketRepository;
 import com.polypulse.repository.NewsEventRepository;
 import com.polypulse.repository.PriceTickRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.*;
@@ -33,7 +32,7 @@ public class MarketController {
     private final NewsEventRepository newsEventRepository;
 
     @GetMapping
-    @Cacheable(value = "markets:active", key = "#category ?: 'all'")
+    // TODO: Re-enable @Cacheable when Redis serialization for Instant is configured
     public List<MarketDTO> getMarkets(@RequestParam(required = false) String category) {
         List<Market> markets = marketRepository.findByActiveTrue();
 
@@ -59,7 +58,6 @@ public class MarketController {
     }
 
     @GetMapping("/{id}")
-    @Cacheable(value = "market:detail", key = "#id")
     public MarketDTO getMarket(@PathVariable Long id) {
         Market market = marketRepository.findById(id)
                 .orElseThrow(() -> new GlobalExceptionHandler.MarketNotFoundException(id));

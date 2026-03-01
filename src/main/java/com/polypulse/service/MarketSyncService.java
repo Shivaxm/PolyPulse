@@ -67,12 +67,24 @@ public class MarketSyncService {
     private int processMarket(JsonNode marketNode, String category) {
         String conditionId = marketNode.get("conditionId").asText();
 
-        // Get the first clobTokenId
-        JsonNode clobTokenIds = marketNode.get("clobTokenIds");
-        if (clobTokenIds == null || !clobTokenIds.isArray() || clobTokenIds.isEmpty()) {
+        // Get the first clobTokenId (field is a JSON string, not an array node)
+        String clobTokenId;
+        try {
+            JsonNode clobTokenIdsNode = marketNode.get("clobTokenIds");
+            if (clobTokenIdsNode == null) return 0;
+            // Could be a JSON string "["abc","def"]" or an actual array node
+            JsonNode tokenArray;
+            if (clobTokenIdsNode.isArray()) {
+                tokenArray = clobTokenIdsNode;
+            } else {
+                tokenArray = objectMapper.readTree(clobTokenIdsNode.asText());
+            }
+            if (!tokenArray.isArray() || tokenArray.isEmpty()) return 0;
+            clobTokenId = tokenArray.get(0).asText();
+        } catch (Exception e) {
+            log.debug("Failed to parse clobTokenIds: {}", e.getMessage());
             return 0;
         }
-        String clobTokenId = clobTokenIds.get(0).asText();
 
         String question = marketNode.has("question") ? marketNode.get("question").asText() : "";
         String slug = marketNode.has("slug") ? marketNode.get("slug").asText(null) : null;
