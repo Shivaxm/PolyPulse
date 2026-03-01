@@ -1,7 +1,9 @@
 package com.polypulse.controller;
 
 import com.polypulse.repository.MarketRepository;
+import com.polypulse.service.IngestionMetrics;
 import com.polypulse.service.MarketSyncService;
+import com.polypulse.service.PriceIngestionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,6 +20,8 @@ public class HealthController {
 
     private final MarketRepository marketRepository;
     private final MarketSyncService marketSyncService;
+    private final IngestionMetrics ingestionMetrics;
+    private final PriceIngestionService priceIngestionService;
 
     @GetMapping("/health")
     public Map<String, Object> health() {
@@ -25,6 +29,13 @@ public class HealthController {
         status.put("status", "ok");
         status.put("marketsTracked", marketRepository.countByActiveTrue());
         status.put("lastSync", marketSyncService.getLastSyncAt());
+        status.put("ticksReceived", ingestionMetrics.getTicksReceived());
+        status.put("ticksWritten", ingestionMetrics.getTicksWritten());
+        status.put("ticksDropped", ingestionMetrics.getTicksDropped());
+        status.put("queueDepth", priceIngestionService.getQueueDepth());
+        status.put("wsConnected", ingestionMetrics.isWsConnected());
+        status.put("lastTickTimestamp", ingestionMetrics.getLastTickTimestamp());
+        status.put("uptime", ingestionMetrics.getUptime().toSeconds() + "s");
         status.put("timestamp", Instant.now());
         return status;
     }
