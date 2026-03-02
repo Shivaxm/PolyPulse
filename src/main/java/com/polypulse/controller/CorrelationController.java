@@ -1,16 +1,14 @@
 package com.polypulse.controller;
 
 import com.polypulse.dto.CorrelationDTO;
-import com.polypulse.model.Correlation;
-import com.polypulse.model.Market;
-import com.polypulse.model.NewsEvent;
+import com.polypulse.dto.CorrelationMapper;
 import com.polypulse.repository.CorrelationRepository;
-import com.polypulse.repository.MarketRepository;
-import com.polypulse.repository.NewsEventRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/correlations")
@@ -18,32 +16,22 @@ import org.springframework.web.bind.annotation.*;
 public class CorrelationController {
 
     private final CorrelationRepository correlationRepository;
-    private final MarketRepository marketRepository;
-    private final NewsEventRepository newsEventRepository;
 
     @GetMapping("/recent")
-    public Page<CorrelationDTO> getRecent(@RequestParam(defaultValue = "0") int page,
-                                           @RequestParam(defaultValue = "20") int size) {
-        return correlationRepository.findAllByOrderByDetectedAtDesc(PageRequest.of(page, size))
-                .map(this::toDTO);
-    }
+    public Map<String, Object> getRecent(@RequestParam(defaultValue = "0") int page,
+                                          @RequestParam(defaultValue = "20") int size) {
+        List<Object[]> rows = correlationRepository.findRecentCorrelationsWithDetails(size, page * size);
+        long total = correlationRepository.countAllCorrelations();
 
-    private CorrelationDTO toDTO(Correlation c) {
-        Market market = marketRepository.findById(c.getMarketId()).orElse(null);
-        NewsEvent news = newsEventRepository.findById(c.getNewsEventId()).orElse(null);
+        List<CorrelationDTO> content = rows.stream().map(CorrelationMapper::fromRow).toList();
 
-        return CorrelationDTO.builder()
-                .id(c.getId())
-                .market(market != null ? CorrelationDTO.MarketSummary.builder()
-                        .id(market.getId()).question(market.getQuestion()).build() : null)
-                .news(news != null ? CorrelationDTO.NewsSummary.builder()
-                        .headline(news.getHeadline()).source(news.getSource())
-                        .url(news.getUrl()).publishedAt(news.getPublishedAt()).build() : null)
-                .priceBefore(c.getPriceBefore())
-                .priceAfter(c.getPriceAfter())
-                .priceDelta(c.getPriceDelta())
-                .confidence(c.getConfidence())
-                .detectedAt(c.getDetectedAt())
-                .build();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("content", content);
+        result.put("totalElements", total);
+        result.put("totalPages", (int) Math.ceil((double) total / size));
+        result.put("number", page);
+        result.put("size", size);
+        result.put("last", (page + 1) * size >= total);
+        return result;
     }
 }

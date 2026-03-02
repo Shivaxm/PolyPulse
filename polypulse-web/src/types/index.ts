@@ -7,6 +7,7 @@ export interface Market {
   category: string | null;
   hasRecentCorrelation: boolean;
   lastUpdated: string;
+  sparkline: { timestamp: string; price: number }[];
 }
 
 export interface PricePoint {

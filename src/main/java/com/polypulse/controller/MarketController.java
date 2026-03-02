@@ -1,25 +1,21 @@
 package com.polypulse.controller;
 
 import com.polypulse.dto.CorrelationDTO;
+import com.polypulse.dto.CorrelationMapper;
 import com.polypulse.dto.MarketDTO;
 import com.polypulse.dto.PricePointDTO;
-import com.polypulse.model.Correlation;
 import com.polypulse.model.Market;
-import com.polypulse.model.NewsEvent;
 import com.polypulse.model.PriceTick;
 import com.polypulse.repository.CorrelationRepository;
 import com.polypulse.repository.MarketRepository;
-import com.polypulse.repository.NewsEventRepository;
 import com.polypulse.repository.PriceTickRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api/markets")
@@ -29,10 +25,8 @@ public class MarketController {
     private final MarketRepository marketRepository;
     private final PriceTickRepository priceTickRepository;
     private final CorrelationRepository correlationRepository;
-    private final NewsEventRepository newsEventRepository;
 
     @GetMapping
-    // TODO: Re-enable @Cacheable when Redis serialization for Instant is configured
     public List<MarketDTO> getMarkets(@RequestParam(required = false) String category) {
         List<Market> markets = marketRepository.findByActiveTrue();
 
@@ -44,6 +38,26 @@ public class MarketController {
 
         Instant oneDayAgo = Instant.now().minus(Duration.ofDays(1));
 
+        Set<Long> marketsWithCorrelations = correlationRepository.findMarketIdsWithCorrelationsSince(oneDayAgo);
+
+        List<Long> marketIds = markets.stream().map(Market::getId).toList();
+        Map<Long, List<MarketDTO.SparklinePoint>> sparklines = new HashMap<>();
+
+        if (!marketIds.isEmpty()) {
+            List<Object[]> sparklineRows = priceTickRepository.findSparklineData(marketIds, oneDayAgo);
+            for (Object[] row : sparklineRows) {
+                Long marketId = ((Number) row[0]).longValue();
+                Instant ts = toInstant(row[1]);
+                BigDecimal price = (BigDecimal) row[2];
+
+                sparklines.computeIfAbsent(marketId, k -> new ArrayList<>())
+                        .add(MarketDTO.SparklinePoint.builder()
+                                .timestamp(ts)
+                                .price(price)
+                                .build());
+            }
+        }
+
         return markets.stream().map(m -> MarketDTO.builder()
                 .id(m.getId())
                 .question(m.getQuestion())
@@ -51,8 +65,9 @@ public class MarketController {
                 .noPrice(m.getOutcomeNoPrice())
                 .volume24h(m.getVolume24h())
                 .category(m.getCategory())
-                .hasRecentCorrelation(hasRecentCorrelation(m.getId(), oneDayAgo))
+                .hasRecentCorrelation(marketsWithCorrelations.contains(m.getId()))
                 .lastUpdated(m.getLastSyncedAt())
+                .sparkline(sparklines.getOrDefault(m.getId(), List.of()))
                 .build()
         ).toList();
     }
@@ -63,6 +78,7 @@ public class MarketController {
                 .orElseThrow(() -> new GlobalExceptionHandler.MarketNotFoundException(id));
 
         Instant oneDayAgo = Instant.now().minus(Duration.ofDays(1));
+        boolean hasCorrelation = correlationRepository.existsByMarketIdAndDetectedAtAfter(market.getId(), oneDayAgo);
 
         return MarketDTO.builder()
                 .id(market.getId())
@@ -71,7 +87,7 @@ public class MarketController {
                 .noPrice(market.getOutcomeNoPrice())
                 .volume24h(market.getVolume24h())
                 .category(market.getCategory())
-                .hasRecentCorrelation(hasRecentCorrelation(market.getId(), oneDayAgo))
+                .hasRecentCorrelation(hasCorrelation)
                 .lastUpdated(market.getLastSyncedAt())
                 .build();
     }
@@ -79,7 +95,6 @@ public class MarketController {
     @GetMapping("/{id}/prices")
     public List<PricePointDTO> getPriceHistory(@PathVariable Long id,
                                                 @RequestParam(defaultValue = "24h") String range) {
-        // Verify market exists
         marketRepository.findById(id)
                 .orElseThrow(() -> new GlobalExceptionHandler.MarketNotFoundException(id));
 
@@ -87,10 +102,10 @@ public class MarketController {
         String interval;
 
         switch (range) {
-            case "1h" -> { start = Instant.now().minus(Duration.ofHours(1)); interval = "minute"; }
-            case "6h" -> { start = Instant.now().minus(Duration.ofHours(6)); interval = "minute"; }
+            case "1h" -> { start = Instant.now().minus(Duration.ofHours(1)); interval = "1 minute"; }
+            case "6h" -> { start = Instant.now().minus(Duration.ofHours(6)); interval = "5 minutes"; }
             case "24h" -> { start = Instant.now().minus(Duration.ofDays(1)); interval = "15 minutes"; }
-            case "7d" -> { start = Instant.now().minus(Duration.ofDays(7)); interval = "hour"; }
+            case "7d" -> { start = Instant.now().minus(Duration.ofDays(7)); interval = "1 hour"; }
             default -> throw new IllegalArgumentException("Invalid range: " + range + ". Use 1h, 6h, 24h, or 7d");
         };
 
@@ -108,10 +123,9 @@ public class MarketController {
             }
         }
 
-        // Use bucketed query
         List<Object[]> rows = priceTickRepository.findBucketed(id, start, interval);
         return rows.stream().map(row -> PricePointDTO.builder()
-                .timestamp(((java.sql.Timestamp) row[0]).toInstant())
+                .timestamp(toInstant(row[0]))
                 .price(row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO)
                 .volume(row[2] != null ? (BigDecimal) row[2] : BigDecimal.ZERO)
                 .build()
@@ -119,38 +133,31 @@ public class MarketController {
     }
 
     @GetMapping("/{id}/correlations")
-    public Page<CorrelationDTO> getMarketCorrelations(@PathVariable Long id,
-                                                       @RequestParam(defaultValue = "0") int page,
-                                                       @RequestParam(defaultValue = "20") int size) {
+    public Map<String, Object> getMarketCorrelations(@PathVariable Long id,
+                                                      @RequestParam(defaultValue = "0") int page,
+                                                      @RequestParam(defaultValue = "20") int size) {
         marketRepository.findById(id)
                 .orElseThrow(() -> new GlobalExceptionHandler.MarketNotFoundException(id));
 
-        return correlationRepository.findByMarketIdOrderByDetectedAtDesc(id, PageRequest.of(page, size))
-                .map(this::toCorrelationDTO);
+        List<Object[]> rows = correlationRepository.findCorrelationsWithDetailsByMarketId(id, size, page * size);
+        long total = correlationRepository.countCorrelationsByMarketId(id);
+
+        List<CorrelationDTO> content = rows.stream().map(CorrelationMapper::fromRow).toList();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("content", content);
+        result.put("totalElements", total);
+        result.put("totalPages", (int) Math.ceil((double) total / size));
+        result.put("number", page);
+        result.put("size", size);
+        result.put("last", (page + 1) * size >= total);
+        return result;
     }
 
-    private boolean hasRecentCorrelation(Long marketId, Instant since) {
-        Page<Correlation> recent = correlationRepository
-                .findByMarketIdOrderByDetectedAtDesc(marketId, PageRequest.of(0, 1));
-        return recent.hasContent() && recent.getContent().getFirst().getDetectedAt().isAfter(since);
-    }
-
-    private CorrelationDTO toCorrelationDTO(Correlation c) {
-        Market market = marketRepository.findById(c.getMarketId()).orElse(null);
-        NewsEvent news = newsEventRepository.findById(c.getNewsEventId()).orElse(null);
-
-        return CorrelationDTO.builder()
-                .id(c.getId())
-                .market(market != null ? CorrelationDTO.MarketSummary.builder()
-                        .id(market.getId()).question(market.getQuestion()).build() : null)
-                .news(news != null ? CorrelationDTO.NewsSummary.builder()
-                        .headline(news.getHeadline()).source(news.getSource())
-                        .url(news.getUrl()).publishedAt(news.getPublishedAt()).build() : null)
-                .priceBefore(c.getPriceBefore())
-                .priceAfter(c.getPriceAfter())
-                .priceDelta(c.getPriceDelta())
-                .confidence(c.getConfidence())
-                .detectedAt(c.getDetectedAt())
-                .build();
+    private static Instant toInstant(Object value) {
+        if (value == null) return null;
+        if (value instanceof java.sql.Timestamp ts) return ts.toInstant();
+        if (value instanceof java.time.OffsetDateTime odt) return odt.toInstant();
+        return Instant.parse(value.toString());
     }
 }

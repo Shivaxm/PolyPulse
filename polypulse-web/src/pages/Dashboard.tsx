@@ -76,13 +76,9 @@ export default function Dashboard() {
         {markets.map(market => {
           const livePrice = priceUpdates.get(market.id)?.price ?? market.yesPrice ?? 0;
           const priceDisplay = Math.round(livePrice * 100);
-          const sparkData = [
-            { v: (market.yesPrice ?? 0.5) - 0.02 },
-            { v: (market.yesPrice ?? 0.5) - 0.01 },
-            { v: (market.yesPrice ?? 0.5) },
-            { v: (market.yesPrice ?? 0.5) + 0.01 },
-            { v: livePrice },
-          ];
+          const sparkData = market.sparkline && market.sparkline.length > 0
+            ? market.sparkline.map(p => ({ v: p.price }))
+            : [{ v: market.yesPrice ?? 0.5 }];
 
           return (
             <div

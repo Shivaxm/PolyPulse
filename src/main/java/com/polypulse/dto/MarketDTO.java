@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 
 @Data
 @Builder
@@ -21,4 +22,14 @@ public class MarketDTO {
     private String category;
     private boolean hasRecentCorrelation;
     private Instant lastUpdated;
+    private List<SparklinePoint> sparkline;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SparklinePoint {
+        private Instant timestamp;
+        private BigDecimal price;
+    }
 }
