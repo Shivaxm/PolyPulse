@@ -34,7 +34,7 @@ services:
       DATABASE_USERNAME: polypulse
       DATABASE_PASSWORD: polypulse
       REDIS_HOST: redis
-      NEWS_API_KEY: ${NEWS_API_KEY:-}
+      NEWS_API_KEY: ${NEWS_API_KEY:-dff5341b38394b79bcd90d444030ae96}
     depends_on:
       postgres:
         condition: service_healthy

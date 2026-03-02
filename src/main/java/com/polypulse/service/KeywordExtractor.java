@@ -23,9 +23,17 @@ public class KeywordExtractor {
             "she", "they", "we", "me", "my", "his", "her", "their", "our",
             "said", "says", "new", "news", "report", "reports", "according", "per",
             "via", "get", "got", "one", "two", "first", "last", "back", "still",
-            "even", "many", "much", "well", "way", "only", "own", "other", "like"
+            "even", "many", "much", "well", "way", "only", "own", "other", "like",
+            "could", "make", "made", "take", "took", "come", "came", "going", "goes",
+            "year", "years", "day", "days", "time", "week", "month", "people", "world",
+            "state", "states", "country", "city", "high", "low", "big", "set", "end"
     );
 
+    /**
+     * Extract meaningful keywords from a headline.
+     * Minimum length 4 to filter generic short words (war, tax, win, fed, etc.)
+     * that produce too many false-positive matches against market questions.
+     */
     public List<String> extract(String text) {
         if (text == null || text.isBlank()) return List.of();
 
@@ -33,7 +41,7 @@ public class KeywordExtractor {
         List<String> keywords = new ArrayList<>();
 
         for (String token : tokens) {
-            if (token.length() >= 3 && !STOPWORDS.contains(token)) {
+            if (token.length() >= 4 && !STOPWORDS.contains(token)) {
                 keywords.add(token);
             }
         }

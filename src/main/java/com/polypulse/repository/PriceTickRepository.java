@@ -53,4 +53,7 @@ public interface PriceTickRepository extends JpaRepository<PriceTick, Long> {
             @Param("marketId") Long marketId,
             @Param("start") Instant start,
             @Param("interval") String interval);
+
+    List<PriceTick> findByMarketIdAndTimestampBetweenOrderByTimestampAsc(
+            Long marketId, Instant start, Instant end);
 }

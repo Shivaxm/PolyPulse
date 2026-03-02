@@ -58,11 +58,17 @@ public class NewsIngestionService {
 
         try {
             String provider = config.getNews().getProvider();
+
             String url;
             if ("gnews".equals(provider)) {
                 url = "https://gnews.io/api/v4/top-headlines?category=general&lang=en&max=10&apikey=" + apiKey;
             } else {
-                url = "https://newsapi.org/v2/top-headlines?country=us&pageSize=20&apiKey=" + apiKey;
+                String[] categories = {"general", "business", "technology", "science"};
+                long cycle = totalIngested.get();
+                String category = categories[(int) (cycle % categories.length)];
+                url = "https://newsapi.org/v2/top-headlines?country=us&category=" + category
+                        + "&pageSize=20&apiKey=" + apiKey;
+                log.debug("Fetching news category: {}", category);
             }
 
             String response = restTemplate.getForObject(url, String.class);
@@ -82,7 +88,7 @@ public class NewsIngestionService {
                     if (newsEventRepository.existsByUrl(articleUrl)) continue;
 
                     String headline = article.has("title") ? article.get("title").asText("") : "";
-                    if (headline.isBlank()) continue;
+                    if (headline.isBlank() || headline.equals("[Removed]")) continue;
 
                     String source = null;
                     if (article.has("source") && article.get("source").has("name")) {
@@ -92,7 +98,8 @@ public class NewsIngestionService {
                     Instant publishedAt = parsePublishedAt(article);
                     List<String> keywords = keywordExtractor.extract(headline);
                     if (keywords.isEmpty()) {
-                        log.warn("No keywords extracted from headline: {}", headline);
+                        log.debug("No keywords extracted from headline: {}", headline);
+                        continue;
                     }
 
                     NewsEvent newsEvent = NewsEvent.builder()

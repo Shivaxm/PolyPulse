@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,8 +47,11 @@ public class PriceBackfillService {
                         market.getId(), since, Instant.now());
 
         if (existing.size() >= 5) {
-            backfilledMarkets.add(market.getId());
-            return false;
+            Instant oldestExisting = existing.get(existing.size() - 1).getTimestamp();
+            if (oldestExisting.isBefore(since.plus(Duration.ofHours(1)))) {
+                backfilledMarkets.add(market.getId());
+                return false;
+            }
         }
 
         try {
