@@ -1,14 +1,15 @@
 import { memo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { Market } from '../types';
 import Sparkline from './Sparkline';
 
 interface MarketCardProps {
   market: Market;
   livePrice: number | undefined;
-  onClick: () => void;
 }
 
-const MarketCard = memo(function MarketCard({ market, livePrice, onClick }: MarketCardProps) {
+const MarketCard = memo(function MarketCard({ market, livePrice }: MarketCardProps) {
+  const navigate = useNavigate();
   const price = livePrice ?? market.yesPrice ?? 0;
   const priceDisplay = Math.round(price * 100);
 
@@ -18,7 +19,7 @@ const MarketCard = memo(function MarketCard({ market, livePrice, onClick }: Mark
 
   return (
     <div
-      onClick={onClick}
+      onClick={() => navigate(`/market/${market.id}`)}
       style={{
         background: '#1f2937',
         borderRadius: '0.5rem',

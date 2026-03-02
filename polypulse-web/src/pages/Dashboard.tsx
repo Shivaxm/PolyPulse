@@ -1,5 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import type { Market } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
 import MarketCard from '../components/MarketCard';
@@ -9,7 +8,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { priceUpdates, isConnected } = useEventStream('/api/stream/live');
-  const navigate = useNavigate();
 
   useEffect(() => {
     fetch('/api/markets')
@@ -31,10 +29,6 @@ export default function Dashboard() {
         setLoading(false);
       });
   }, []);
-
-  const handleMarketClick = useCallback((id: number) => {
-    navigate(`/market/${id}`);
-  }, [navigate]);
 
   if (loading) {
     return (
@@ -82,7 +76,6 @@ export default function Dashboard() {
             key={market.id}
             market={market}
             livePrice={priceUpdates.get(market.id)?.price}
-            onClick={() => handleMarketClick(market.id)}
           />
         ))}
       </div>

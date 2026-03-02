@@ -29,9 +29,15 @@ public class PriceBackfillService {
     private final RestTemplate restTemplate;
 
     private final Set<Long> backfilledMarkets = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<Long, Instant> failedAttempts = new ConcurrentHashMap<>();
 
     public boolean backfillIfNeeded(Market market, Instant since) {
         if (backfilledMarkets.contains(market.getId())) {
+            return false;
+        }
+
+        Instant lastFail = failedAttempts.get(market.getId());
+        if (lastFail != null && Instant.now().isBefore(lastFail.plusSeconds(300))) {
             return false;
         }
 
@@ -46,8 +52,8 @@ public class PriceBackfillService {
 
         try {
             String url = config.getPolymarket().getClobUrl()
-                    + "/prices-history?market=" + market.getConditionId()
-                    + "&interval=max&fidelity=hour";
+                    + "/prices-history?market=" + market.getClobTokenId()
+                    + "&interval=max&fidelity=60";
 
             log.info("Backfilling price history for market {} from CLOB API", market.getId());
             String response = restTemplate.getForObject(url, String.class);
@@ -109,7 +115,7 @@ public class PriceBackfillService {
 
         } catch (Exception e) {
             log.warn("Failed to backfill price history for market {}: {}", market.getId(), e.getMessage());
-            backfilledMarkets.add(market.getId());
+            failedAttempts.put(market.getId(), Instant.now());
             return false;
         }
     }
