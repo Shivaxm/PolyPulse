@@ -33,7 +33,7 @@ public class PriceIngestionService implements SmartLifecycle {
     private final PolymarketConfig config;
     private final ApplicationEventPublisher eventPublisher;
     private final IngestionMetrics metrics;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     private final BlockingQueue<PriceTick> buffer = new LinkedBlockingQueue<>(10_000);
     private final ConcurrentHashMap<String, Long> tokenToMarketId = new ConcurrentHashMap<>();
@@ -51,12 +51,14 @@ public class PriceIngestionService implements SmartLifecycle {
                                   PriceTickRepository priceTickRepository,
                                   PolymarketConfig config,
                                   ApplicationEventPublisher eventPublisher,
-                                  IngestionMetrics metrics) {
+                                  IngestionMetrics metrics,
+                                  ObjectMapper objectMapper) {
         this.marketRepository = marketRepository;
         this.priceTickRepository = priceTickRepository;
         this.config = config;
         this.eventPublisher = eventPublisher;
         this.metrics = metrics;
+        this.objectMapper = objectMapper;
     }
 
     @Override

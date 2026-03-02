@@ -1,8 +1,17 @@
 FROM eclipse-temurin:21-jdk-alpine AS build
 WORKDIR /app
+
+RUN apk add --no-cache maven
+
 COPY pom.xml .
+COPY polypulse-web/package.json polypulse-web/package-lock.json polypulse-web/
+
+RUN mvn dependency:go-offline -q || true
+
 COPY src ./src
-RUN apk add --no-cache maven && mvn package -DskipTests -q
+COPY polypulse-web ./polypulse-web
+
+RUN mvn package -DskipTests -q
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app

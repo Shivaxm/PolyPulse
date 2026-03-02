@@ -25,25 +25,22 @@ Real-time prediction market dashboard that correlates news events with Polymarke
 - **Database:** PostgreSQL 16 (Flyway migrations), Redis 7 (caching)
 - **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Recharts
 - **Real-time:** WebSocket (upstream), Server-Sent Events (downstream)
-- **Deployment:** Docker, Docker Compose
+- **Deployment:** Docker, Docker Compose (single container serves API + frontend)
 
-## Run Locally
+## Quick Start
 
 ### Prerequisites
 
 - Java 21
-- Maven
-- Node.js 18+
 - Docker & Docker Compose
 
-### Quick Start (Docker Compose)
+### Run with Docker Compose
 
 ```bash
-# Start everything
+# Start everything (one command)
 NEWS_API_KEY=your-key-here docker compose up --build
 
-# Frontend: http://localhost:3000
-# API: http://localhost:8080/api/health
+# Open http://localhost:8080
 ```
 
 ### Development Mode
@@ -52,17 +49,26 @@ NEWS_API_KEY=your-key-here docker compose up --build
 # Start databases
 docker compose up postgres redis -d
 
-# Start backend
-export NEWS_API_KEY=your-key-here
-export JAVA_HOME=/path/to/java-21
-mvn spring-boot:run
+# Start backend (from project root)
+NEWS_API_KEY=your-key-here JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home ./mvnw spring-boot:run
 
-# Start frontend (separate terminal)
+# Start frontend with hot reload (separate terminal)
 cd polypulse-web
 npm install
 npm run dev
-# Frontend: http://localhost:5173
+# Frontend dev server: http://localhost:5173 (proxies API to :8080)
 ```
+
+## Deployment
+
+Single container deployment — the Java app serves both the API and frontend.
+
+### Railway / Render / Fly.io
+
+1. Add a PostgreSQL and Redis service
+2. Set environment variables: `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`, `REDIS_HOST`, `NEWS_API_KEY`
+3. Deploy from the Dockerfile — it builds everything in one step
+4. App runs on port 8080
 
 ## API Endpoints
 
@@ -98,5 +104,4 @@ k6 run load-tests/ingestion-stress-test.js
 - **Spring Events as internal bus:** No Kafka needed for single-process event routing
 - **Redis cache with per-key TTLs:** Market list (60s), market detail (5m); price history uncached (well-indexed)
 - **Keyword matching over NLP:** Simple, fast, sufficient for Polymarket's explicit market questions
-
-See [design doc](polypulse-design-doc.md) for full architectural rationale and scaling discussion.
+- **Single-container deploy:** Maven builds frontend + backend into one jar; no nginx needed

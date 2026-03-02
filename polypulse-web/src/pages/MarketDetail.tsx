@@ -4,7 +4,7 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
-import { Market, PricePoint, CorrelationItem, PagedResponse } from '../types';
+import type { Market, PricePoint, CorrelationItem, PagedResponse } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
 
 const RANGES = ['1h', '6h', '24h', '7d'] as const;
@@ -109,7 +109,7 @@ export default function MarketDetail() {
               <YAxis stroke="#6b7280" fontSize={11} tickLine={false} domain={['auto', 'auto']} tickFormatter={(v: number) => `${Math.round(v * 100)}c`} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '0.5rem', color: '#fff' }}
-                formatter={(value: number) => [`${Math.round(value * 100)}c`, 'Price']}
+                formatter={(value: number | undefined) => [`${Math.round((value ?? 0) * 100)}c`, 'Price']}
               />
               {correlations.map((c, i) => (
                 <ReferenceLine

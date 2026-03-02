@@ -25,7 +25,7 @@ services:
       timeout: 5s
       retries: 5
 
-  polypulse-api:
+  app:
     build: .
     ports:
       - "8080:8080"
@@ -40,13 +40,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-
-  polypulse-web:
-    build: ./polypulse-web
-    ports:
-      - "3000:80"
-    depends_on:
-      - polypulse-api
 
 volumes:
   pgdata:

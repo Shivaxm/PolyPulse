@@ -30,8 +30,8 @@ public class NewsIngestionService {
     private final PolymarketConfig config;
     private final KeywordExtractor keywordExtractor;
     private final ApplicationEventPublisher eventPublisher;
-    private final ObjectMapper objectMapper = new ObjectMapper();
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final ObjectMapper objectMapper;
+    private final RestTemplate restTemplate;
 
     private final AtomicLong totalIngested = new AtomicLong(0);
     private volatile Instant lastIngestedAt;

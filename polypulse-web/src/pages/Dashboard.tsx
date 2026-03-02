@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
-import { Market } from '../types';
+import type { Market } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
 
 export default function Dashboard() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { priceUpdates, correlations, isConnected } = useEventStream('/api/stream/live');
+  const { priceUpdates, isConnected } = useEventStream('/api/stream/live');
   const navigate = useNavigate();
 
   useEffect(() => {

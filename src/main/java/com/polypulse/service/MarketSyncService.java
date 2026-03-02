@@ -25,7 +25,8 @@ public class MarketSyncService {
     private final MarketRepository marketRepository;
     private final PolymarketConfig config;
     private final ApplicationEventPublisher eventPublisher;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
+    private final RestTemplate restTemplate;
 
     private volatile Instant lastSyncAt;
 
@@ -34,8 +35,6 @@ public class MarketSyncService {
         try {
             String url = config.getPolymarket().getGammaUrl()
                     + "/events?active=true&closed=false&limit=50";
-
-            RestTemplate restTemplate = new RestTemplate();
             String response = restTemplate.getForObject(url, String.class);
             JsonNode events = objectMapper.readTree(response);
 

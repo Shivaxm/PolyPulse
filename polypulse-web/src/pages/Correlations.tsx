@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CorrelationItem, PagedResponse } from '../types';
+import type { CorrelationItem, PagedResponse } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
 
 export default function Correlations() {

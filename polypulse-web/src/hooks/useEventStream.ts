@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { PriceUpdate, CorrelationItem } from '../types';
+import type { PriceUpdate, CorrelationItem } from '../types';
 
 interface EventStreamState {
   priceUpdates: Map<number, PriceUpdate>;
