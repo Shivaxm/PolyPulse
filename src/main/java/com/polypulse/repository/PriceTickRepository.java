@@ -40,4 +40,17 @@ public interface PriceTickRepository extends JpaRepository<PriceTick, Long> {
     List<Object[]> findSparklineData(
             @Param("marketIds") List<Long> marketIds,
             @Param("start") Instant start);
+
+    @Query(value = """
+            SELECT date_trunc(:interval, timestamp) AS bucket,
+                   AVG(price) AS price,
+                   SUM(volume) AS volume
+            FROM price_ticks
+            WHERE market_id = :marketId AND timestamp > :start
+            GROUP BY bucket ORDER BY bucket
+            """, nativeQuery = true)
+    List<Object[]> findBucketedFallback(
+            @Param("marketId") Long marketId,
+            @Param("start") Instant start,
+            @Param("interval") String interval);
 }

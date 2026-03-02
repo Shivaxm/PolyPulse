@@ -14,9 +14,14 @@ export default function MarketDetail() {
   const navigate = useNavigate();
   const [market, setMarket] = useState<Market | null>(null);
   const [prices, setPrices] = useState<PricePoint[]>([]);
+  const [priceLoading, setPriceLoading] = useState(true);
+  const [priceError, setPriceError] = useState<string | null>(null);
   const [correlations, setCorrelations] = useState<CorrelationItem[]>([]);
   const [range, setRange] = useState<string>('24h');
-  const { priceUpdates } = useEventStream(`/api/stream/markets/${id}`);
+
+  // Defer SSE until market data loads
+  const [sseUrl, setSseUrl] = useState<string | null>(null);
+  const { priceUpdates } = useEventStream(sseUrl ?? '');
 
   useEffect(() => {
     fetch(`/api/markets/${id}`)
@@ -24,15 +29,35 @@ export default function MarketDetail() {
         if (!res.ok) throw new Error('Not found');
         return res.json();
       })
-      .then(setMarket)
+      .then(data => {
+        setMarket(data);
+        setSseUrl(`/api/stream/markets/${id}`);
+      })
       .catch(() => navigate('/'));
   }, [id, navigate]);
 
   useEffect(() => {
+    setPriceLoading(true);
+    setPriceError(null);
     fetch(`/api/markets/${id}/prices?range=${range}`)
-      .then(res => res.ok ? res.json() : [])
-      .then(data => setPrices(Array.isArray(data) ? data : []))
-      .catch(() => setPrices([]));
+      .then(res => {
+        if (!res.ok) {
+          return res.text().then(text => {
+            throw new Error(`API error ${res.status}: ${text}`);
+          });
+        }
+        return res.json();
+      })
+      .then(data => {
+        setPrices(Array.isArray(data) ? data : []);
+        setPriceLoading(false);
+      })
+      .catch(err => {
+        console.error('Price fetch failed:', err);
+        setPriceError(err.message);
+        setPrices([]);
+        setPriceLoading(false);
+      });
   }, [id, range]);
 
   useEffect(() => {
@@ -98,9 +123,19 @@ export default function MarketDetail() {
       </div>
 
       <div style={{ background: '#1f2937', borderRadius: '0.5rem', padding: '1rem', marginBottom: '1.5rem', height: 400 }}>
-        {chartData.length === 0 ? (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#6b7280' }}>
-            No price data for this range yet
+        {priceLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#9ca3af' }}>
+            Loading price data...
+          </div>
+        ) : priceError ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#ef4444', flexDirection: 'column', gap: '0.5rem' }}>
+            <div>Failed to load price data</div>
+            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{priceError}</div>
+          </div>
+        ) : chartData.length === 0 ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#6b7280', flexDirection: 'column', gap: '0.5rem' }}>
+            <div>No price data for this range yet</div>
+            <div style={{ fontSize: '0.75rem' }}>Price history builds up over time as ticks are captured. Try a shorter range or check back later.</div>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">

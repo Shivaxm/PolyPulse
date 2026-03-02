@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import type { Market } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
+import MarketCard from '../components/MarketCard';
 
 export default function Dashboard() {
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -31,6 +31,10 @@ export default function Dashboard() {
         setLoading(false);
       });
   }, []);
+
+  const handleMarketClick = useCallback((id: number) => {
+    navigate(`/market/${id}`);
+  }, [navigate]);
 
   if (loading) {
     return (
@@ -73,53 +77,14 @@ export default function Dashboard() {
 
       {/* Market grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-        {markets.map(market => {
-          const livePrice = priceUpdates.get(market.id)?.price ?? market.yesPrice ?? 0;
-          const priceDisplay = Math.round(livePrice * 100);
-          const sparkData = market.sparkline && market.sparkline.length > 0
-            ? market.sparkline.map(p => ({ v: p.price }))
-            : [{ v: market.yesPrice ?? 0.5 }];
-
-          return (
-            <div
-              key={market.id}
-              onClick={() => navigate(`/market/${market.id}`)}
-              style={{
-                background: '#1f2937',
-                borderRadius: '0.5rem',
-                padding: '1rem',
-                cursor: 'pointer',
-                border: market.hasRecentCorrelation ? '1px solid #f59e0b80' : '1px solid #374151',
-              }}
-            >
-              <h3 style={{ fontSize: '0.875rem', color: '#e5e7eb', marginBottom: '0.75rem', minHeight: '2.5rem', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                {market.question}
-              </h3>
-              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                <div>
-                  <span style={{ fontSize: '1.875rem', fontWeight: 'bold', color: 'white' }}>{priceDisplay}</span>
-                  <span style={{ fontSize: '1.125rem', color: '#9ca3af' }}>&cent;</span>
-                </div>
-                <div style={{ width: '6rem', height: '3rem' }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={sparkData}>
-                      <Area type="monotone" dataKey="v" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} strokeWidth={1.5} dot={false} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#6b7280' }}>
-                <span>{market.category ?? 'uncategorized'}</span>
-                {market.volume24h != null && <span>${(market.volume24h / 1000).toFixed(1)}k vol</span>}
-              </div>
-              {market.hasRecentCorrelation && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#fbbf24' }}>
-                  News impact detected
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {markets.map(market => (
+          <MarketCard
+            key={market.id}
+            market={market}
+            livePrice={priceUpdates.get(market.id)?.price}
+            onClick={() => handleMarketClick(market.id)}
+          />
+        ))}
       </div>
     </div>
   );

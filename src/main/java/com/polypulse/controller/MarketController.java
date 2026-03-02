@@ -9,7 +9,9 @@ import com.polypulse.model.PriceTick;
 import com.polypulse.repository.CorrelationRepository;
 import com.polypulse.repository.MarketRepository;
 import com.polypulse.repository.PriceTickRepository;
+import com.polypulse.service.PriceBackfillService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -20,11 +22,13 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/markets")
 @RequiredArgsConstructor
+@Slf4j
 public class MarketController {
 
     private final MarketRepository marketRepository;
     private final PriceTickRepository priceTickRepository;
     private final CorrelationRepository correlationRepository;
+    private final PriceBackfillService priceBackfillService;
 
     @GetMapping
     public List<MarketDTO> getMarkets(@RequestParam(required = false) String category) {
@@ -95,7 +99,7 @@ public class MarketController {
     @GetMapping("/{id}/prices")
     public List<PricePointDTO> getPriceHistory(@PathVariable Long id,
                                                 @RequestParam(defaultValue = "24h") String range) {
-        marketRepository.findById(id)
+        Market market = marketRepository.findById(id)
                 .orElseThrow(() -> new GlobalExceptionHandler.MarketNotFoundException(id));
 
         Instant start;
@@ -108,6 +112,9 @@ public class MarketController {
             case "7d" -> { start = Instant.now().minus(Duration.ofDays(7)); interval = "1 hour"; }
             default -> throw new IllegalArgumentException("Invalid range: " + range + ". Use 1h, 6h, 24h, or 7d");
         };
+
+        // Backfill from Polymarket API if we don't have enough local data
+        priceBackfillService.backfillIfNeeded(market, start);
 
         // For short ranges, return individual ticks if few enough
         if ("1h".equals(range) || "6h".equals(range)) {
@@ -123,7 +130,20 @@ public class MarketController {
             }
         }
 
-        List<Object[]> rows = priceTickRepository.findBucketed(id, start, interval);
+        List<Object[]> rows;
+        try {
+            rows = priceTickRepository.findBucketed(id, start, interval);
+        } catch (Exception e) {
+            log.warn("date_bin query failed, falling back to date_trunc: {}", e.getMessage());
+            String fallbackInterval = switch (range) {
+                case "1h", "6h" -> "minute";
+                case "24h" -> "hour";
+                case "7d" -> "hour";
+                default -> "hour";
+            };
+            rows = priceTickRepository.findBucketedFallback(id, start, fallbackInterval);
+        }
+
         return rows.stream().map(row -> PricePointDTO.builder()
                 .timestamp(toInstant(row[0]))
                 .price(row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO)
