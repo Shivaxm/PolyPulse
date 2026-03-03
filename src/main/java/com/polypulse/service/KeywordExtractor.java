@@ -24,7 +24,7 @@ public class KeywordExtractor {
             "said", "says", "new", "news", "report", "reports", "according", "per",
             "via", "get", "got", "one", "two", "first", "last", "back", "still",
             "even", "many", "much", "well", "way", "only", "own", "other", "like",
-            "could", "make", "made", "take", "took", "come", "came", "going", "goes",
+            "make", "made", "take", "took", "come", "came", "going", "goes",
             "year", "years", "day", "days", "time", "week", "month", "people", "world",
             "state", "states", "country", "city", "high", "low", "big", "set", "end"
     );
