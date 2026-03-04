@@ -18,6 +18,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
@@ -239,8 +240,24 @@ public class PriceIngestionService implements SmartLifecycle {
 
     private void processEvent(JsonNode node) {
         String eventType = node.has("event_type") ? node.get("event_type").asText() : "";
-        if (!"price_change".equals(eventType)) return;
+        switch (eventType) {
+            case "last_trade_price":
+                processLastTradePrice(node);
+                break;
+            case "price_change":
+                processPriceChange(node);
+                break;
+            // "book" events are too noisy and heavy — skip
+            default:
+                break;
+        }
+    }
 
+    /**
+     * Handles last_trade_price events — emitted when a trade executes.
+     * Schema: { "event_type": "last_trade_price", "asset_id": "...", "price": "0.456", "timestamp": "1750428146322" }
+     */
+    private void processLastTradePrice(JsonNode node) {
         String assetId = node.has("asset_id") ? node.get("asset_id").asText() : null;
         if (assetId == null) return;
 
@@ -249,39 +266,124 @@ public class PriceIngestionService implements SmartLifecycle {
 
         try {
             BigDecimal price = new BigDecimal(node.get("price").asText());
-            Instant timestamp = Instant.now();
-            if (node.has("timestamp")) {
-                try {
-                    timestamp = Instant.parse(node.get("timestamp").asText());
-                } catch (Exception ignored) {
-                    // use current time as fallback
-                }
-            }
+            Instant timestamp = parseTimestamp(node);
 
-            PriceTick tick = PriceTick.builder()
-                    .marketId(marketId)
-                    .price(price)
-                    .timestamp(timestamp)
-                    .build();
-
-            metrics.incrementTicksReceived();
-            metrics.setLastTickTimestamp(timestamp);
-
-            if (!buffer.offer(tick)) {
-                long dropped = metrics.incrementTicksDropped();
-                if (dropped % 100 == 0) {
-                    log.warn("Buffer full, dropped {} ticks total", dropped);
-                }
-                return;
-            }
-
-            // Publish event for SSE fan-out (real-time path)
-            String conditionId = tokenToConditionId.getOrDefault(assetId, "");
-            eventPublisher.publishEvent(new PriceTickEvent(this, marketId, conditionId, price, timestamp));
-
+            saveTick(marketId, assetId, price, timestamp);
         } catch (Exception e) {
-            log.debug("Failed to process price event: {}", e.getMessage());
+            log.debug("Failed to process last_trade_price: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Handles price_change events — emitted when an order is placed or cancelled.
+     * Post Sept 2025 schema: { "event_type": "price_change", "price_changes": [{ "asset_id": "...", "best_bid": "0.5", "best_ask": "0.52" }] }
+     *
+     * Computes midpoint price from best_bid and best_ask.
+     */
+    private void processPriceChange(JsonNode node) {
+        JsonNode priceChanges = node.get("price_changes");
+        if (priceChanges == null || !priceChanges.isArray()) {
+            // Try legacy format (pre-Sept 2025): top-level asset_id + price
+            processLegacyPriceChange(node);
+            return;
+        }
+
+        Instant timestamp = parseTimestamp(node);
+
+        for (JsonNode change : priceChanges) {
+            String assetId = change.has("asset_id") ? change.get("asset_id").asText() : null;
+            if (assetId == null) continue;
+
+            Long marketId = tokenToMarketId.get(assetId);
+            if (marketId == null) continue;
+
+            try {
+                String bestBidStr = change.has("best_bid") ? change.get("best_bid").asText() : null;
+                String bestAskStr = change.has("best_ask") ? change.get("best_ask").asText() : null;
+
+                if (bestBidStr == null || bestAskStr == null) continue;
+
+                BigDecimal bestBid = new BigDecimal(bestBidStr);
+                BigDecimal bestAsk = new BigDecimal(bestAskStr);
+
+                // Midpoint price — same calculation Polymarket uses for display
+                BigDecimal price = bestBid.add(bestAsk).divide(BigDecimal.valueOf(2), 6, RoundingMode.HALF_UP);
+
+                // Skip if bid or ask is 0 (no liquidity on one side)
+                if (bestBid.compareTo(BigDecimal.ZERO) == 0 || bestAsk.compareTo(BigDecimal.ZERO) == 0) {
+                    continue;
+                }
+
+                saveTick(marketId, assetId, price, timestamp);
+            } catch (Exception e) {
+                log.debug("Failed to process price_change element: {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Fallback for pre-Sept 2025 price_change format.
+     * Schema: { "event_type": "price_change", "asset_id": "...", "price": "0.5" }
+     */
+    private void processLegacyPriceChange(JsonNode node) {
+        String assetId = node.has("asset_id") ? node.get("asset_id").asText() : null;
+        if (assetId == null) return;
+
+        Long marketId = tokenToMarketId.get(assetId);
+        if (marketId == null) return;
+
+        JsonNode priceNode = node.get("price");
+        if (priceNode == null) return;
+
+        try {
+            BigDecimal price = new BigDecimal(priceNode.asText());
+            Instant timestamp = parseTimestamp(node);
+            saveTick(marketId, assetId, price, timestamp);
+        } catch (Exception e) {
+            log.debug("Failed to process legacy price_change: {}", e.getMessage());
+        }
+    }
+
+    private Instant parseTimestamp(JsonNode node) {
+        if (node.has("timestamp")) {
+            try {
+                String tsStr = node.get("timestamp").asText();
+                // Polymarket sends unix millis as a string
+                long tsMillis = Long.parseLong(tsStr);
+                return Instant.ofEpochMilli(tsMillis);
+            } catch (Exception e) {
+                // Try ISO format
+                try {
+                    return Instant.parse(node.get("timestamp").asText());
+                } catch (Exception ignored) {
+                    // Fallback below
+                }
+            }
+        }
+        return Instant.now();
+    }
+
+    private void saveTick(Long marketId, String assetId, BigDecimal price, Instant timestamp) {
+        PriceTick tick = PriceTick.builder()
+                .marketId(marketId)
+                .price(price)
+                .timestamp(timestamp)
+                .build();
+
+        metrics.incrementTicksReceived();
+        metrics.setLastTickTimestamp(timestamp);
+
+        if (!buffer.offer(tick)) {
+            long dropped = metrics.incrementTicksDropped();
+            if (dropped % 100 == 0) {
+                log.warn("Buffer full, dropped {} ticks total", dropped);
+            }
+            return;
+        }
+
+        // Publish event for SSE fan-out (real-time path)
+        String conditionId = tokenToConditionId.getOrDefault(assetId, "");
+        eventPublisher.publishEvent(new PriceTickEvent(this, marketId, conditionId, price, timestamp));
     }
 
     /**

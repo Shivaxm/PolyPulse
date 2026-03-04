@@ -4,6 +4,9 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @Data
 @Configuration
 @ConfigurationProperties(prefix = "polypulse")
@@ -24,6 +27,15 @@ public class PolymarketConfig {
     @Data
     public static class Sync {
         private long marketIntervalMs = 300000;
+        private Map<String, Integer> categoryTags = new LinkedHashMap<>(Map.of(
+                "politics", 2,
+                "crypto", 21,
+                "sports", 100639,
+                "finance", 120,
+                "tech", 1401,
+                "culture", 596,
+                "geopolitics", 100265
+        ));
     }
 
     @Data

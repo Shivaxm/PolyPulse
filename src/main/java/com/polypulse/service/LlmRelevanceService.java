@@ -31,26 +31,12 @@ public class LlmRelevanceService {
 
     private static final String ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
-    /**
-     * Represents a market that the LLM validated as relevant to a news headline.
-     */
     public record RelevantMarket(Long marketId, String reasoning, double relevanceScore) {}
 
-    /**
-     * Given a news headline, checks which candidate markets are genuinely related.
-     * Makes a single batch LLM call with all candidates — returns only the relevant ones.
-     *
-     * @param headline     The news article headline
-     * @param candidates   Map of marketId → market question text
-     * @return List of markets the LLM confirmed as relevant, with explanations
-     */
     public List<RelevantMarket> checkRelevance(String headline, Map<Long, String> candidates) {
         if (apiKey == null || apiKey.isBlank()) {
-            log.warn("ANTHROPIC_API_KEY not configured — falling back to keyword matching (no LLM validation)");
-            // Return all candidates as relevant with generic reasoning
-            return candidates.entrySet().stream()
-                    .map(e -> new RelevantMarket(e.getKey(), "Keyword match (LLM unavailable)", 0.5))
-                    .toList();
+            log.warn("ANTHROPIC_API_KEY not configured — LLM validation disabled, returning no matches");
+            return List.of();
         }
 
         if (candidates.isEmpty()) {
@@ -62,14 +48,11 @@ public class LlmRelevanceService {
             String response = callClaude(prompt);
             return parseResponse(response, candidates);
         } catch (Exception e) {
-            log.error("LLM relevance check failed: {} — falling back to no matches", e.getMessage());
+            log.error("LLM relevance check failed: {} — returning no matches", e.getMessage());
             return List.of();
         }
     }
 
-    /**
-     * Returns true if the LLM service is available (API key is configured).
-     */
     public boolean isAvailable() {
         return apiKey != null && !apiKey.isBlank();
     }
@@ -87,20 +70,27 @@ public class LlmRelevanceService {
 
         sb.append("""
 
-Which of these prediction markets could be DIRECTLY affected by this news? A market is directly affected if:
-- The news is specifically about the same topic, person, entity, or event as the market
-- A reasonable trader would update their position on the market after reading this news
-- The connection is not coincidental (e.g. both mentioning "Florida" is NOT enough)
+Your task: identify which prediction markets are DIRECTLY and SPECIFICALLY affected by this news headline. Be VERY strict — most headlines do NOT directly affect most markets.
 
-Respond with ONLY a JSON array. Each element should have:
-- "index": the market number from the list above
-- "score": relevance from 0.0-1.0 (0.7+ means clearly related)
-- "reasoning": one sentence explaining the causal connection
+A market is DIRECTLY affected ONLY if ALL of these are true:
+1. The news is about the SPECIFIC topic, person, entity, or event named in the market question
+2. The news provides NEW INFORMATION that would change the probability of the market's outcome
+3. A professional trader would IMMEDIATELY adjust their position on this specific market after reading this headline
 
-If NO markets are genuinely related, respond with an empty array: []
+REJECT these common false positives:
+- Same country/location but different topics (e.g. "SpaceX launches from Florida" does NOT affect "Florida Panthers win Stanley Cup")
+- Same broad sector (e.g. "Dow Jones falls" does NOT directly affect "Will specific crypto token reach $X valuation" — general market sentiment is too indirect)
+- General economic news matched to unrelated markets (e.g. "US wholesale prices rise" does NOT affect "Harvey Weinstein sentenced" or "US-Russia military clash")
+- Sharing a keyword like "US", "China", "Trump", or "market" is NOT enough — the news must be ABOUT the specific question the market asks
 
-Example response:
-[{"index": 3, "score": 0.85, "reasoning": "The Fed rate decision directly impacts inflation expectations, which this market tracks."}]
+When in doubt, do NOT include the market. It is much better to return an empty array than to include a weak connection.
+
+Respond with ONLY a JSON array. Each element:
+- "index": market number from the list
+- "score": 0.0-1.0 (only include markets you'd score 0.75 or higher)
+- "reasoning": one sentence explaining the SPECIFIC causal link
+
+If NO markets are genuinely and directly related, respond with: []
 
 Respond with ONLY the JSON array, no other text.""");
 
@@ -116,6 +106,7 @@ Respond with ONLY the JSON array, no other text.""");
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", "claude-haiku-4-5-20251001");
         body.put("max_tokens", 1024);
+        body.put("system", "You are a strict financial relevance classifier. You ONLY return markets that have a direct, specific, first-order causal connection to the news headline. You are skeptical by default and prefer returning an empty array over including weak or indirect connections. General market conditions, shared geography, or shared sector are NEVER sufficient.");
         body.put("messages", List.of(Map.of("role", "user", "content", prompt)));
 
         try {
@@ -130,7 +121,6 @@ Respond with ONLY the JSON array, no other text.""");
                 return "[]";
             }
 
-            // Extract text from Claude's response
             JsonNode root = objectMapper.readTree(response.getBody());
             JsonNode content = root.get("content");
             if (content != null && content.isArray() && !content.isEmpty()) {
@@ -146,7 +136,6 @@ Respond with ONLY the JSON array, no other text.""");
 
     private List<RelevantMarket> parseResponse(String response, Map<Long, String> candidates) {
         try {
-            // Strip markdown fences if present
             String cleaned = response.strip();
             if (cleaned.startsWith("```")) {
                 cleaned = cleaned.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").strip();
@@ -158,12 +147,11 @@ Respond with ONLY the JSON array, no other text.""");
                 return List.of();
             }
 
-            // Build index-to-marketId mapping
             List<Long> marketIds = new ArrayList<>(candidates.keySet());
 
             List<RelevantMarket> results = new ArrayList<>();
             for (JsonNode item : array) {
-                int index = item.get("index").asInt() - 1; // 1-indexed in prompt → 0-indexed
+                int index = item.get("index").asInt() - 1;
                 double score = item.has("score") ? item.get("score").asDouble() : 0.5;
                 String reasoning = item.has("reasoning") ? item.get("reasoning").asText() : "";
 
@@ -172,16 +160,19 @@ Respond with ONLY the JSON array, no other text.""");
                     continue;
                 }
 
-                // Only accept markets with score >= 0.6
-                if (score < 0.6) {
-                    log.debug("LLM rated market at {} (below 0.6 threshold), skipping", String.format("%.2f", score));
+                // Raised threshold: only accept clearly relevant markets
+                if (score < 0.75) {
+                    log.debug("LLM rated market at {} (below 0.75 threshold), skipping: {}",
+                            String.format("%.2f", score),
+                            candidates.get(marketIds.get(index)));
                     continue;
                 }
 
                 results.add(new RelevantMarket(marketIds.get(index), reasoning, score));
             }
 
-            log.info("LLM relevance check: {} of {} candidates validated", results.size(), candidates.size());
+            log.info("LLM relevance check: {} of {} candidates passed (threshold 0.75)",
+                    results.size(), candidates.size());
             return results;
 
         } catch (Exception e) {
