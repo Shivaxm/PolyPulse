@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
@@ -33,6 +34,7 @@ public class PriceIngestionService implements SmartLifecycle {
     private final PolymarketConfig config;
     private final ApplicationEventPublisher eventPublisher;
     private final IngestionMetrics metrics;
+    private final PriceBackfillService priceBackfillService;
     private final ObjectMapper objectMapper;
 
     private final BlockingQueue<PriceTick> buffer = new LinkedBlockingQueue<>(10_000);
@@ -52,12 +54,14 @@ public class PriceIngestionService implements SmartLifecycle {
                                   PolymarketConfig config,
                                   ApplicationEventPublisher eventPublisher,
                                   IngestionMetrics metrics,
+                                  PriceBackfillService priceBackfillService,
                                   ObjectMapper objectMapper) {
         this.marketRepository = marketRepository;
         this.priceTickRepository = priceTickRepository;
         this.config = config;
         this.eventPublisher = eventPublisher;
         this.metrics = metrics;
+        this.priceBackfillService = priceBackfillService;
         this.objectMapper = objectMapper;
     }
 
@@ -133,16 +137,38 @@ public class PriceIngestionService implements SmartLifecycle {
                     public void onClose(Session session, CloseReason closeReason) {
                         log.warn("WebSocket closed: {}", closeReason);
                         metrics.setWsConnected(false);
+                        scheduleReconnect();
                     }
 
                     @Override
                     public void onError(Session session, Throwable thr) {
                         log.error("WebSocket error: {}", thr.getMessage());
                         metrics.setWsConnected(false);
+                        scheduleReconnect();
                     }
                 }, ClientEndpointConfig.Builder.create().build(), URI.create(wsUrl));
 
                 log.info("Connected to Polymarket WebSocket, tracking {} markets", tokenToMarketId.size());
+
+                Instant lastTick = metrics.getLastTickTimestamp();
+                if (lastTick != null) {
+                    Duration gap = Duration.between(lastTick, Instant.now());
+                    if (gap.toMinutes() > 2 && gap.toHours() < 1) {
+                        log.info("Detected {}min gap, triggering backfill from {}", gap.toMinutes(), lastTick);
+                        CompletableFuture.runAsync(() -> {
+                            List<Market> markets = marketRepository.findByActiveTrue();
+                            for (Market market : markets) {
+                                try {
+                                    priceBackfillService.backfillIfNeeded(market, lastTick);
+                                } catch (Exception e) {
+                                    log.debug("Gap recovery failed for market {}: {}", market.getId(), e.getMessage());
+                                }
+                            }
+                            log.info("Gap recovery complete");
+                        });
+                    }
+                }
+
                 return; // Connected successfully
 
             } catch (Exception e) {
@@ -157,6 +183,25 @@ public class PriceIngestionService implements SmartLifecycle {
                     Thread.currentThread().interrupt();
                     return;
                 }
+            }
+        }
+    }
+
+    private void scheduleReconnect() {
+        if (running.get() && !wsExecutor.isShutdown()) {
+            try {
+                wsExecutor.submit(() -> {
+                    try {
+                        Thread.sleep(2000);
+                        if (running.get() && !wsExecutor.isShutdown()) {
+                            connectWebSocket();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+            } catch (RejectedExecutionException e) {
+                log.debug("Reconnect task rejected: {}", e.getMessage());
             }
         }
     }

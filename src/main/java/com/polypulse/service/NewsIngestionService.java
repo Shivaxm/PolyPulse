@@ -58,6 +58,7 @@ public class NewsIngestionService {
 
         try {
             String provider = config.getNews().getProvider();
+            String category = "general";
 
             String url;
             if ("gnews".equals(provider)) {
@@ -65,7 +66,7 @@ public class NewsIngestionService {
             } else {
                 String[] categories = {"general", "business", "technology", "science"};
                 long cycle = totalIngested.get();
-                String category = categories[(int) (cycle % categories.length)];
+                category = categories[(int) (cycle % categories.length)];
                 url = "https://newsapi.org/v2/top-headlines?country=us&category=" + category
                         + "&pageSize=20&apiKey=" + apiKey;
                 log.debug("Fetching news category: {}", category);
@@ -109,7 +110,7 @@ public class NewsIngestionService {
                             .publishedAt(publishedAt)
                             .ingestedAt(Instant.now())
                             .keywords(keywords)
-                            .category("general")
+                            .category(category)
                             .build();
 
                     newsEvent = newsEventRepository.save(newsEvent);

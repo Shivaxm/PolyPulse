@@ -69,7 +69,21 @@ public class CorrelationEngine {
         }
     }
 
-    private void checkCorrelations(NewsEvent newsEvent) {
+    @Scheduled(fixedDelay = 600000) // 10 minutes
+    public void scheduledBackfill() {
+        List<Market> activeMarkets = marketRepository.findByActiveTrue();
+        Instant since = Instant.now().minus(Duration.ofDays(1));
+
+        for (Market market : activeMarkets) {
+            try {
+                priceBackfillService.backfillIfNeeded(market, since);
+            } catch (Exception e) {
+                log.debug("Scheduled backfill failed for market {}: {}", market.getId(), e.getMessage());
+            }
+        }
+    }
+
+    void checkCorrelations(NewsEvent newsEvent) {
         List<String> keywords = newsEvent.getKeywords();
         if (keywords == null || keywords.isEmpty()) return;
 
@@ -89,7 +103,7 @@ public class CorrelationEngine {
             if (matchingKeywords == 0) continue;
             if (matchingKeywords == 1) {
                 boolean hasSingleLongMatch = keywords.stream()
-                        .filter(kw -> kw.length() >= 6)
+                        .filter(kw -> kw.length() >= 4)
                         .anyMatch(kw -> questionLower.contains(kw.toLowerCase()));
                 if (!hasSingleLongMatch) continue;
             }
@@ -115,14 +129,6 @@ public class CorrelationEngine {
         PolymarketConfig.Correlation corrConfig = config.getCorrelation();
         Instant newsTime = newsEvent.getPublishedAt();
 
-        try {
-            Instant backfillSince = newsTime.minus(Duration.ofDays(7));
-            priceBackfillService.backfillIfNeeded(market, backfillSince);
-        } catch (Exception e) {
-            log.debug("Backfill failed for market {}, continuing with available data: {}",
-                    market.getId(), e.getMessage());
-        }
-
         // Find price BEFORE the news
         Instant beforeStart = newsTime.minus(Duration.ofMinutes(corrConfig.getBeforeWindowMinutes()));
         List<PriceTick> beforeTicks = priceTickRepository
@@ -142,11 +148,11 @@ public class CorrelationEngine {
         }
 
         // Find price AFTER the news
-        Instant afterStart = newsTime.plus(Duration.ofMinutes(5));
+        Instant afterStart = newsTime.plus(Duration.ofMinutes(1));
         Instant afterEnd = newsTime.plus(Duration.ofMinutes(corrConfig.getAfterWindowMinutes()));
         Instant now = Instant.now();
 
-        if (now.isBefore(newsTime.plus(Duration.ofMinutes(15)))) {
+        if (now.isBefore(newsTime.plus(Duration.ofMinutes(corrConfig.getAfterWindowMinutes())))) {
             return;
         }
         if (afterEnd.isAfter(now)) {
@@ -160,7 +166,15 @@ public class CorrelationEngine {
 
         BigDecimal priceAfter;
         if (!afterTicks.isEmpty()) {
-            priceAfter = afterTicks.get(afterTicks.size() - 1).getPrice();
+            BigDecimal maxDeviation = BigDecimal.ZERO;
+            priceAfter = afterTicks.get(afterTicks.size() - 1).getPrice(); // default to last
+            for (PriceTick tick : afterTicks) {
+                BigDecimal deviation = tick.getPrice().subtract(priceBefore).abs();
+                if (deviation.compareTo(maxDeviation) > 0) {
+                    maxDeviation = deviation;
+                    priceAfter = tick.getPrice();
+                }
+            }
         } else if (market.getOutcomeYesPrice() != null
                 && Duration.between(newsTime, now).toMinutes() > 30) {
             priceAfter = market.getOutcomeYesPrice();

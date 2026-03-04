@@ -12,6 +12,8 @@ import java.util.List;
 @Repository
 public interface PriceTickRepository extends JpaRepository<PriceTick, Long> {
 
+    long countByMarketId(Long marketId);
+
     List<PriceTick> findByMarketIdAndTimestampBetweenOrderByTimestampDesc(
             Long marketId, Instant start, Instant end);
 
