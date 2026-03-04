@@ -2,6 +2,7 @@ package com.polypulse.repository;
 
 import com.polypulse.model.PriceTick;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -58,4 +59,8 @@ public interface PriceTickRepository extends JpaRepository<PriceTick, Long> {
 
     List<PriceTick> findByMarketIdAndTimestampBetweenOrderByTimestampAsc(
             Long marketId, Instant start, Instant end);
+
+    @Modifying
+    @Query(value = "DELETE FROM price_ticks WHERE timestamp < :cutoff", nativeQuery = true)
+    int deleteOlderThan(@Param("cutoff") Instant cutoff);
 }

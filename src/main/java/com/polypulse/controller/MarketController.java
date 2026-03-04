@@ -9,6 +9,8 @@ import com.polypulse.model.PriceTick;
 import com.polypulse.repository.CorrelationRepository;
 import com.polypulse.repository.MarketRepository;
 import com.polypulse.repository.PriceTickRepository;
+import com.polypulse.service.MarketCacheService;
+import com.polypulse.service.PriceCacheService;
 import com.polypulse.service.PriceBackfillService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,10 +31,13 @@ public class MarketController {
     private final PriceTickRepository priceTickRepository;
     private final CorrelationRepository correlationRepository;
     private final PriceBackfillService priceBackfillService;
+    private final MarketCacheService marketCacheService;
+    private final PriceCacheService priceCacheService;
 
     @GetMapping
     public List<MarketDTO> getMarkets(@RequestParam(required = false) String category) {
-        List<Market> markets = marketRepository.findByActiveTrue();
+        List<Market> allActiveMarkets = marketCacheService.getActiveMarkets();
+        List<Market> markets = allActiveMarkets;
 
         if (category != null && !category.isBlank()) {
             markets = markets.stream()
@@ -44,36 +49,28 @@ public class MarketController {
 
         Set<Long> marketsWithCorrelations = correlationRepository.findMarketIdsWithCorrelationsSince(oneDayAgo);
 
-        List<Long> marketIds = markets.stream().map(Market::getId).toList();
-        Map<Long, List<MarketDTO.SparklinePoint>> sparklines = new HashMap<>();
+        List<Long> allMarketIds = allActiveMarkets.stream().map(Market::getId).toList();
+        Map<Long, List<MarketDTO.SparklinePoint>> sparklines = marketCacheService.getSparklines(allMarketIds, oneDayAgo);
 
-        if (!marketIds.isEmpty()) {
-            List<Object[]> sparklineRows = priceTickRepository.findSparklineData(marketIds, oneDayAgo);
-            for (Object[] row : sparklineRows) {
-                Long marketId = ((Number) row[0]).longValue();
-                Instant ts = toInstant(row[1]);
-                BigDecimal price = (BigDecimal) row[2];
+        // Get live prices from in-memory cache (instant)
+        Map<Long, PriceCacheService.CachedPrice> livePrices = priceCacheService.getAllLatestPrices();
 
-                sparklines.computeIfAbsent(marketId, k -> new ArrayList<>())
-                        .add(MarketDTO.SparklinePoint.builder()
-                                .timestamp(ts)
-                                .price(price)
-                                .build());
-            }
-        }
+        return markets.stream().map(m -> {
+            PriceCacheService.CachedPrice livePrice = livePrices.get(m.getId());
+            BigDecimal currentPrice = livePrice != null ? livePrice.price() : m.getOutcomeYesPrice();
 
-        return markets.stream().map(m -> MarketDTO.builder()
-                .id(m.getId())
-                .question(m.getQuestion())
-                .yesPrice(m.getOutcomeYesPrice())
-                .noPrice(m.getOutcomeNoPrice())
-                .volume24h(m.getVolume24h())
-                .category(m.getCategory())
-                .hasRecentCorrelation(marketsWithCorrelations.contains(m.getId()))
-                .lastUpdated(m.getLastSyncedAt())
-                .sparkline(sparklines.getOrDefault(m.getId(), List.of()))
-                .build()
-        ).toList();
+            return MarketDTO.builder()
+                    .id(m.getId())
+                    .question(m.getQuestion())
+                    .yesPrice(currentPrice)
+                    .noPrice(m.getOutcomeNoPrice())
+                    .volume24h(m.getVolume24h())
+                    .category(m.getCategory())
+                    .hasRecentCorrelation(marketsWithCorrelations.contains(m.getId()))
+                    .lastUpdated(livePrice != null ? livePrice.timestamp() : m.getLastSyncedAt())
+                    .sparkline(sparklines.getOrDefault(m.getId(), List.of()))
+                    .build();
+        }).toList();
     }
 
     @GetMapping("/{id}")

@@ -6,6 +6,10 @@ spring:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/polypulse}
     username: ${DATABASE_USERNAME:polypulse}
     password: ${DATABASE_PASSWORD:polypulse}
+    hikari:
+      maximum-pool-size: 15
+      minimum-idle: 5
+      connection-timeout: 5000
   jpa:
     hibernate:
       ddl-auto: validate
@@ -13,6 +17,10 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
   flyway:
     enabled: true
   data:

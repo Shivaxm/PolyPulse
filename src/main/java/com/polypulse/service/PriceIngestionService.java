@@ -8,7 +8,7 @@ import com.polypulse.event.PriceTickEvent;
 import com.polypulse.model.Market;
 import com.polypulse.model.PriceTick;
 import com.polypulse.repository.MarketRepository;
-import com.polypulse.repository.PriceTickRepository;
+import com.polypulse.repository.PriceTickBatchWriter;
 import jakarta.websocket.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -31,16 +31,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class PriceIngestionService implements SmartLifecycle {
 
     private final MarketRepository marketRepository;
-    private final PriceTickRepository priceTickRepository;
+    private final PriceTickBatchWriter priceTickBatchWriter;
     private final PolymarketConfig config;
     private final ApplicationEventPublisher eventPublisher;
     private final IngestionMetrics metrics;
     private final PriceBackfillService priceBackfillService;
+    private final PriceCacheService priceCacheService;
     private final ObjectMapper objectMapper;
 
-    private final BlockingQueue<PriceTick> buffer = new LinkedBlockingQueue<>(10_000);
+    private final BlockingQueue<PriceTick> buffer = new LinkedBlockingQueue<>(50_000);
     private final ConcurrentHashMap<String, Long> tokenToMarketId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> tokenToConditionId = new ConcurrentHashMap<>();
+    // Only write to DB if last write for this market was >15s ago
+    private final ConcurrentHashMap<Long, Instant> lastDbWriteTime = new ConcurrentHashMap<>();
+    private static final Duration DB_WRITE_INTERVAL = Duration.ofSeconds(15);
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile Session wsSession;
@@ -51,18 +55,20 @@ public class PriceIngestionService implements SmartLifecycle {
     });
 
     public PriceIngestionService(MarketRepository marketRepository,
-                                  PriceTickRepository priceTickRepository,
+                                  PriceTickBatchWriter priceTickBatchWriter,
                                   PolymarketConfig config,
                                   ApplicationEventPublisher eventPublisher,
                                   IngestionMetrics metrics,
                                   PriceBackfillService priceBackfillService,
+                                  PriceCacheService priceCacheService,
                                   ObjectMapper objectMapper) {
         this.marketRepository = marketRepository;
-        this.priceTickRepository = priceTickRepository;
+        this.priceTickBatchWriter = priceTickBatchWriter;
         this.config = config;
         this.eventPublisher = eventPublisher;
         this.metrics = metrics;
         this.priceBackfillService = priceBackfillService;
+        this.priceCacheService = priceCacheService;
         this.objectMapper = objectMapper;
     }
 
@@ -364,48 +370,53 @@ public class PriceIngestionService implements SmartLifecycle {
     }
 
     private void saveTick(Long marketId, String assetId, BigDecimal price, Instant timestamp) {
+        // 1. Always update in-memory cache (instant, no DB)
+        String conditionId = tokenToConditionId.getOrDefault(assetId, "");
+        priceCacheService.updatePrice(marketId, price, timestamp, conditionId);
+
+        // 2. Publish SSE event asynchronously
+        metrics.incrementTicksReceived();
+        metrics.setLastTickTimestamp(timestamp);
+        eventPublisher.publishEvent(new PriceTickEvent(this, marketId, conditionId, price, timestamp));
+
+        // 3. Only buffer for DB write if enough time has passed (sampling)
+        Instant lastWrite = lastDbWriteTime.get(marketId);
+        if (lastWrite != null && timestamp.isBefore(lastWrite.plus(DB_WRITE_INTERVAL))) {
+            return; // Skip DB write, cache is already updated
+        }
+        lastDbWriteTime.put(marketId, timestamp);
+
         PriceTick tick = PriceTick.builder()
                 .marketId(marketId)
                 .price(price)
                 .timestamp(timestamp)
                 .build();
 
-        metrics.incrementTicksReceived();
-        metrics.setLastTickTimestamp(timestamp);
-
         if (!buffer.offer(tick)) {
             long dropped = metrics.incrementTicksDropped();
-            if (dropped % 100 == 0) {
+            if (dropped % 1000 == 0) {
                 log.warn("Buffer full, dropped {} ticks total", dropped);
             }
-            return;
         }
-
-        // Publish event for SSE fan-out (real-time path)
-        String conditionId = tokenToConditionId.getOrDefault(assetId, "");
-        eventPublisher.publishEvent(new PriceTickEvent(this, marketId, conditionId, price, timestamp));
     }
 
     /**
-     * Batch writer: drains buffer every 2 seconds and batch-inserts to DB.
+     * Batch writer: drains buffer every second and batch-inserts to DB.
      */
-    @Scheduled(fixedDelay = 2000)
+    @Scheduled(fixedDelay = 1000)
     public void flushBuffer() {
         List<PriceTick> batch = new ArrayList<>();
-        buffer.drainTo(batch, 500);
+        buffer.drainTo(batch, 2000);
         if (batch.isEmpty()) return;
 
         try {
-            priceTickRepository.saveAll(batch);
-            metrics.addTicksWritten(batch.size());
-            log.debug("Wrote {} ticks to DB, queue depth: {}, total dropped: {}",
-                    batch.size(), buffer.size(), metrics.getTicksDropped());
+            int written = priceTickBatchWriter.batchInsert(batch);
+            metrics.addTicksWritten(written);
+            log.debug("Wrote {} ticks to DB (native batch), queue depth: {}", written, buffer.size());
         } catch (Exception e) {
             log.error("Failed to write tick batch: {}", e.getMessage());
-            // Re-queue what we can
-            for (PriceTick tick : batch) {
-                buffer.offer(tick);
-            }
+            // Don't re-queue — ticks are already in the price cache for real-time display.
+            // Historical data will be backfilled from CLOB API if needed.
         }
     }
 

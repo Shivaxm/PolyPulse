@@ -7,6 +7,7 @@ import com.polypulse.event.PriceTickEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -22,6 +23,7 @@ public class SseEventBridge {
     // Throttle: max 1 price update per market per second
     private final ConcurrentHashMap<Long, Instant> lastSentTime = new ConcurrentHashMap<>();
 
+    @Async
     @EventListener
     public void onPriceTick(PriceTickEvent event) {
         Long marketId = event.getMarketId();
