@@ -21,6 +21,7 @@ public class CorrelationDTO {
     private BigDecimal priceDelta;
     private BigDecimal confidence;
     private Instant detectedAt;
+    private String reasoning;
 
     @Data
     @Builder

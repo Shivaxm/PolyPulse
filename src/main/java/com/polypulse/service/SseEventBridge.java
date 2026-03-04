@@ -59,6 +59,7 @@ public class SseEventBridge {
                 .priceDelta(event.getPriceDelta())
                 .confidence(java.math.BigDecimal.valueOf(event.getConfidence()))
                 .detectedAt(event.getDetectedAt())
+                .reasoning(event.getReasoning())
                 .build();
 
         sseConnectionManager.broadcastCorrelation(dto);

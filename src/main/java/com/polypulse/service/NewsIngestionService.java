@@ -3,12 +3,12 @@ package com.polypulse.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.polypulse.config.PolymarketConfig;
+import com.polypulse.event.MarketsSyncedEvent;
 import com.polypulse.event.NewsIngestedEvent;
 import com.polypulse.model.NewsEvent;
 import com.polypulse.repository.NewsEventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
@@ -34,17 +35,23 @@ public class NewsIngestionService {
     private final RestTemplate restTemplate;
 
     private final AtomicLong totalIngested = new AtomicLong(0);
+    private final AtomicLong pollCycle = new AtomicLong(0);
+    private final AtomicBoolean initialSeedDone = new AtomicBoolean(false);
     private volatile Instant lastIngestedAt;
 
-    @EventListener(ApplicationReadyEvent.class)
-    public void onStartup() {
-        if (newsEventRepository.count() == 0) {
-            log.info("News table empty, performing initial backfill...");
+    /**
+     * Fetch news only after markets have been synced — fixes the race condition where
+     * news was ingested before any markets existed, causing zero correlations.
+     */
+    @EventListener
+    public void onMarketsSynced(MarketsSyncedEvent event) {
+        if (initialSeedDone.compareAndSet(false, true)) {
+            log.info("Markets synced. Starting initial news fetch...");
             fetchAndStoreNews();
         }
     }
 
-    @Scheduled(fixedDelayString = "${polypulse.news.poll-interval-ms:60000}", initialDelay = 15000)
+    @Scheduled(fixedDelayString = "${polypulse.news.poll-interval-ms:900000}", initialDelay = 30000)
     public void pollNews() {
         fetchAndStoreNews();
     }
@@ -58,26 +65,31 @@ public class NewsIngestionService {
 
         try {
             String provider = config.getNews().getProvider();
-            String category = "general";
-
             String url;
+
             if ("gnews".equals(provider)) {
                 url = "https://gnews.io/api/v4/top-headlines?category=general&lang=en&max=10&apikey=" + apiKey;
             } else {
                 String[] categories = {"general", "business", "technology", "science"};
-                long cycle = totalIngested.get();
-                category = categories[(int) (cycle % categories.length)];
+                long cycle = pollCycle.getAndIncrement();
+                String category = categories[(int) (cycle % categories.length)];
                 url = "https://newsapi.org/v2/top-headlines?country=us&category=" + category
                         + "&pageSize=20&apiKey=" + apiKey;
-                log.debug("Fetching news category: {}", category);
+                log.info("Fetching news category: {}", category);
             }
 
             String response = restTemplate.getForObject(url, String.class);
             JsonNode root = objectMapper.readTree(response);
-            JsonNode articles = root.get("articles");
 
+            if (root.has("status") && "error".equals(root.get("status").asText())) {
+                String msg = root.has("message") ? root.get("message").asText() : "unknown";
+                log.error("NewsAPI error: {}", msg);
+                return;
+            }
+
+            JsonNode articles = root.get("articles");
             if (articles == null || !articles.isArray()) {
-                log.warn("No articles found in news API response");
+                log.warn("No articles in API response");
                 return;
             }
 
@@ -85,11 +97,17 @@ public class NewsIngestionService {
             for (JsonNode article : articles) {
                 try {
                     String articleUrl = article.has("url") ? article.get("url").asText(null) : null;
-                    if (articleUrl == null || articleUrl.isBlank()) continue;
-                    if (newsEventRepository.existsByUrl(articleUrl)) continue;
+                    if (articleUrl == null || articleUrl.isBlank()) {
+                        continue;
+                    }
+                    if (newsEventRepository.existsByUrl(articleUrl)) {
+                        continue;
+                    }
 
                     String headline = article.has("title") ? article.get("title").asText("") : "";
-                    if (headline.isBlank() || headline.equals("[Removed]")) continue;
+                    if (headline.isBlank() || headline.equals("[Removed]")) {
+                        continue;
+                    }
 
                     String source = null;
                     if (article.has("source") && article.get("source").has("name")) {
@@ -99,7 +117,6 @@ public class NewsIngestionService {
                     Instant publishedAt = parsePublishedAt(article);
                     List<String> keywords = keywordExtractor.extract(headline);
                     if (keywords.isEmpty()) {
-                        log.debug("No keywords extracted from headline: {}", headline);
                         continue;
                     }
 
@@ -110,7 +127,7 @@ public class NewsIngestionService {
                             .publishedAt(publishedAt)
                             .ingestedAt(Instant.now())
                             .keywords(keywords)
-                            .category(category)
+                            .category("general")
                             .build();
 
                     newsEvent = newsEventRepository.save(newsEvent);
@@ -127,7 +144,7 @@ public class NewsIngestionService {
             }
 
             if (newCount > 0) {
-                log.info("Ingested {} new news articles (total: {})", newCount, totalIngested.get());
+                log.info("Ingested {} new articles (total: {})", newCount, totalIngested.get());
             }
 
         } catch (Exception e) {

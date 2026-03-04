@@ -19,11 +19,13 @@ public class CorrelationDetectedEvent extends ApplicationEvent {
     private final BigDecimal priceDelta;
     private final double confidence;
     private final Instant detectedAt;
+    private final String reasoning;
 
     public CorrelationDetectedEvent(Object source, Long correlationId, Long marketId,
                                      String marketQuestion, Long newsEventId, String headline,
                                      BigDecimal priceBefore, BigDecimal priceAfter,
-                                     BigDecimal priceDelta, double confidence, Instant detectedAt) {
+                                     BigDecimal priceDelta, double confidence, Instant detectedAt,
+                                     String reasoning) {
         super(source);
         this.correlationId = correlationId;
         this.marketId = marketId;
@@ -35,5 +37,6 @@ public class CorrelationDetectedEvent extends ApplicationEvent {
         this.priceDelta = priceDelta;
         this.confidence = confidence;
         this.detectedAt = detectedAt;
+        this.reasoning = reasoning;
     }
 }

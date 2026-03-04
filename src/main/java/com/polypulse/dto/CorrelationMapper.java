@@ -6,12 +6,13 @@ import java.time.Instant;
 public class CorrelationMapper {
 
     /**
-     * Maps a native query row from the correlations JOIN query to a CorrelationDTO.
-     * Expected column order:
+     * Maps a native query row to CorrelationDTO.
+     * Column order:
      * 0: c.id, 1: c.market_id, 2: c.news_event_id,
      * 3: c.price_before, 4: c.price_after, 5: c.price_delta,
      * 6: c.time_window_ms, 7: c.confidence, 8: c.detected_at,
-     * 9: m.question, 10: ne.headline, 11: ne.source, 12: ne.url, 13: ne.published_at
+     * 9: m.question, 10: ne.headline, 11: ne.source, 12: ne.url, 13: ne.published_at,
+     * 14: c.reasoning
      */
     public static CorrelationDTO fromRow(Object[] row) {
         return CorrelationDTO.builder()
@@ -31,6 +32,7 @@ public class CorrelationMapper {
                 .priceDelta((BigDecimal) row[5])
                 .confidence((BigDecimal) row[7])
                 .detectedAt(toInstant(row[8]))
+                .reasoning(row.length > 14 ? (String) row[14] : null)
                 .build();
     }
 

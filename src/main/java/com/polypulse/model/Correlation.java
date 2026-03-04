@@ -42,6 +42,9 @@ public class Correlation {
     @Column(name = "detected_at", nullable = false)
     private Instant detectedAt;
 
+    @Column(columnDefinition = "TEXT")
+    private String reasoning;
+
     @PrePersist
     protected void onCreate() {
         if (detectedAt == null) detectedAt = Instant.now();

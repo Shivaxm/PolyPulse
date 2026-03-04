@@ -2,6 +2,7 @@ package com.polypulse.service;
 
 import com.polypulse.config.PolymarketConfig;
 import com.polypulse.event.CorrelationDetectedEvent;
+import com.polypulse.event.MarketsSyncedEvent;
 import com.polypulse.event.NewsIngestedEvent;
 import com.polypulse.model.Correlation;
 import com.polypulse.model.Market;
@@ -22,7 +23,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @Slf4j
@@ -34,102 +38,225 @@ public class CorrelationEngine {
     private final NewsEventRepository newsEventRepository;
     private final CorrelationRepository correlationRepository;
     private final PriceBackfillService priceBackfillService;
+    private final LlmRelevanceService llmRelevanceService;
     private final PolymarketConfig config;
     private final ApplicationEventPublisher eventPublisher;
+
+    private final AtomicBoolean historicalSeedDone = new AtomicBoolean(false);
 
     @EventListener
     public void onNewsIngested(NewsIngestedEvent event) {
         NewsEvent newsEvent = newsEventRepository.findById(event.getNewsEventId()).orElse(null);
-        if (newsEvent == null) return;
+        if (newsEvent == null) {
+            return;
+        }
 
         log.info("Processing news for correlations: '{}'", newsEvent.getHeadline());
-        checkCorrelations(newsEvent);
+        try {
+            checkCorrelations(newsEvent);
+        } catch (Exception e) {
+            log.error("Failed to process correlations for news {}: {}", event.getNewsEventId(), e.getMessage());
+        }
     }
 
+    /**
+     * After the first market sync, wait for news ingestion then seed historical correlations.
+     */
+    @EventListener
+    public void onMarketsSynced(MarketsSyncedEvent event) {
+        if (!historicalSeedDone.compareAndSet(false, true)) {
+            return;
+        }
+
+        Thread seedThread = new Thread(() -> {
+            try {
+                // Wait for initial news fetch to complete
+                Thread.sleep(25_000);
+                seedHistoricalCorrelations();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "correlation-seed");
+        seedThread.setDaemon(true);
+        seedThread.start();
+    }
+
+    /**
+     * Retroactive check every 15 minutes — re-evaluates recent news that may now
+     * have more price data available, or that was missed during initial processing.
+     */
     @Scheduled(fixedDelay = 900000) // 15 minutes
     public void retroactiveCorrelationCheck() {
-        Instant cutoff = Instant.now().minus(Duration.ofHours(4));
+        Instant cutoff = Instant.now().minus(Duration.ofHours(6));
         List<NewsEvent> recentNews = newsEventRepository
                 .findByPublishedAtBetweenOrderByPublishedAtDesc(cutoff, Instant.now());
 
         int checked = 0;
-        int skipped = 0;
+        int found = 0;
         for (NewsEvent newsEvent : recentNews) {
             if (newsEvent.getKeywords() == null || newsEvent.getKeywords().isEmpty()) {
-                skipped++;
                 continue;
             }
-            checkCorrelations(newsEvent);
+            try {
+                found += checkCorrelations(newsEvent);
+            } catch (Exception e) {
+                log.warn("Retroactive check failed for news {}: {}", newsEvent.getId(), e.getMessage());
+            }
             checked++;
         }
 
-        if (checked > 0 || skipped > 0) {
-            log.info("Retroactive correlation check: processed {} news events, skipped {} (no keywords)",
-                    checked, skipped);
+        if (checked > 0) {
+            log.info("Retroactive check: {} news events, {} new correlations", checked, found);
         }
     }
 
-    @Scheduled(fixedDelay = 600000) // 10 minutes
-    public void scheduledBackfill() {
-        List<Market> activeMarkets = marketRepository.findByActiveTrue();
-        Instant since = Instant.now().minus(Duration.ofDays(1));
+    private void seedHistoricalCorrelations() {
+        Instant since = Instant.now().minus(Duration.ofHours(24));
+        List<NewsEvent> recentNews = newsEventRepository
+                .findByPublishedAtBetweenOrderByPublishedAtDesc(since, Instant.now());
 
-        for (Market market : activeMarkets) {
+        if (recentNews.isEmpty()) {
+            log.info("Historical seed: no news events in last 24h");
+            return;
+        }
+
+        log.info("Historical seed: checking {} news events", recentNews.size());
+        int total = 0;
+        for (NewsEvent newsEvent : recentNews) {
+            if (newsEvent.getKeywords() == null || newsEvent.getKeywords().isEmpty()) {
+                continue;
+            }
             try {
-                priceBackfillService.backfillIfNeeded(market, since);
+                total += checkCorrelations(newsEvent);
             } catch (Exception e) {
-                log.debug("Scheduled backfill failed for market {}: {}", market.getId(), e.getMessage());
+                log.warn("Seed failed for news {}: {}", newsEvent.getId(), e.getMessage());
             }
         }
+        log.info("Historical seed complete: {} correlations from {} articles", total, recentNews.size());
     }
 
-    void checkCorrelations(NewsEvent newsEvent) {
+    /**
+     * Two-stage correlation detection:
+     *
+     * Stage 1: Keyword pre-filter
+     *   Fast O(n) scan of all active markets. Finds ~15 candidates that share
+     *   at least one keyword with the headline. This is cheap and instant.
+     *
+     * Stage 2: LLM validation (single batch call)
+     *   Sends all candidates to Claude Haiku in one API call. The LLM returns
+     *   which markets are GENUINELY related to the news, with a reasoning
+     *   explanation. This eliminates false positives like "Florida" matching both
+     *   SpaceX and Florida Panthers.
+     *
+     * Stage 3: Price delta check
+     *   For each LLM-validated market, check if the price actually moved.
+     *   Only save the correlation if there's a measurable price change.
+     *
+     * @return number of new correlations saved
+     */
+    private int checkCorrelations(NewsEvent newsEvent) {
         List<String> keywords = newsEvent.getKeywords();
-        if (keywords == null || keywords.isEmpty()) return;
+        if (keywords == null || keywords.isEmpty()) {
+            return 0;
+        }
 
         List<Market> activeMarkets = marketRepository.findByActiveTrue();
         PolymarketConfig.Correlation corrConfig = config.getCorrelation();
 
-        int candidates = 0;
-        int evaluated = 0;
+        // Stage 1: Keyword pre-filter
+        Map<Long, Market> candidateMap = new LinkedHashMap<>();
         for (Market market : activeMarkets) {
-            if (candidates >= corrConfig.getMaxCandidateMarkets()) break;
-
-            String questionLower = market.getQuestion().toLowerCase();
-            long matchingKeywords = keywords.stream()
-                    .filter(kw -> questionLower.contains(kw.toLowerCase()))
-                    .count();
-
-            if (matchingKeywords == 0) continue;
-            if (matchingKeywords == 1) {
-                boolean hasSingleLongMatch = keywords.stream()
-                        .filter(kw -> kw.length() >= 4)
-                        .anyMatch(kw -> questionLower.contains(kw.toLowerCase()));
-                if (!hasSingleLongMatch) continue;
+            if (candidateMap.size() >= corrConfig.getMaxCandidateMarkets()) {
+                break;
             }
 
-            candidates++;
+            String questionLower = market.getQuestion().toLowerCase();
+            boolean hasMatch = keywords.stream()
+                    .anyMatch(kw -> questionLower.contains(kw.toLowerCase()));
 
+            if (hasMatch) {
+                candidateMap.put(market.getId(), market);
+            }
+        }
+
+        if (candidateMap.isEmpty()) {
+            log.debug("No keyword candidates for: '{}'", truncate(newsEvent.getHeadline(), 60));
+            return 0;
+        }
+
+        log.debug("Stage 1: {} keyword candidates for '{}'", candidateMap.size(),
+                truncate(newsEvent.getHeadline(), 60));
+
+        // Stage 2: LLM validation
+        Map<Long, String> candidateQuestions = new LinkedHashMap<>();
+        for (Map.Entry<Long, Market> entry : candidateMap.entrySet()) {
+            candidateQuestions.put(entry.getKey(), entry.getValue().getQuestion());
+        }
+
+        List<LlmRelevanceService.RelevantMarket> relevantMarkets =
+                llmRelevanceService.checkRelevance(newsEvent.getHeadline(), candidateQuestions);
+
+        if (relevantMarkets.isEmpty()) {
+            log.debug("Stage 2: LLM found no relevant markets for '{}'",
+                    truncate(newsEvent.getHeadline(), 60));
+            return 0;
+        }
+
+        log.info("Stage 2: LLM validated {} of {} candidates for '{}'",
+                relevantMarkets.size(), candidateMap.size(),
+                truncate(newsEvent.getHeadline(), 60));
+
+        // Stage 3: Price delta check
+        int correlationsFound = 0;
+        for (LlmRelevanceService.RelevantMarket rm : relevantMarkets) {
+            Market market = candidateMap.get(rm.marketId());
+            if (market == null) {
+                continue;
+            }
+
+            // Skip if already correlated
             if (correlationRepository.existsByMarketIdAndNewsEventId(market.getId(), newsEvent.getId())) {
                 continue;
             }
 
-            evaluateCorrelation(market, newsEvent, keywords, matchingKeywords);
-            evaluated++;
+            try {
+                boolean saved = evaluateAndSave(market, newsEvent, rm.reasoning(), rm.relevanceScore());
+                if (saved) {
+                    correlationsFound++;
+                }
+            } catch (Exception e) {
+                log.warn("Stage 3 failed for market {} x news {}: {}",
+                        market.getId(), newsEvent.getId(), e.getMessage());
+            }
         }
 
-        if (candidates > 0) {
-            log.debug("News '{}': {} candidate markets, {} evaluated (keywords: {})",
-                    truncate(newsEvent.getHeadline(), 60), candidates, evaluated, keywords);
-        }
+        return correlationsFound;
     }
 
-    private void evaluateCorrelation(Market market, NewsEvent newsEvent,
-                                      List<String> keywords, long matchingKeywords) {
+    /**
+     * Checks price movement and saves the correlation if delta is significant.
+     * The LLM has already confirmed semantic relevance — this just validates
+     * that the market actually moved.
+     */
+    private boolean evaluateAndSave(Market market, NewsEvent newsEvent,
+                                     String reasoning, double llmScore) {
         PolymarketConfig.Correlation corrConfig = config.getCorrelation();
         Instant newsTime = newsEvent.getPublishedAt();
+        Instant now = Instant.now();
 
-        // Find price BEFORE the news
+        // Must have at least 15 minutes of post-news time
+        if (now.isBefore(newsTime.plus(Duration.ofMinutes(15)))) {
+            return false;
+        }
+
+        // Backfill historical price data
+        try {
+            priceBackfillService.backfillIfNeeded(market, newsTime.minus(Duration.ofDays(1)));
+        } catch (Exception e) {
+            log.debug("Backfill failed for market {}: {}", market.getId(), e.getMessage());
+        }
+
+        // Price BEFORE the news
         Instant beforeStart = newsTime.minus(Duration.ofMinutes(corrConfig.getBeforeWindowMinutes()));
         List<PriceTick> beforeTicks = priceTickRepository
                 .findByMarketIdAndTimestampBetweenOrderByTimestampDesc(
@@ -138,96 +265,65 @@ public class CorrelationEngine {
         BigDecimal priceBefore;
         if (!beforeTicks.isEmpty()) {
             priceBefore = beforeTicks.get(0).getPrice();
-        } else if (market.getOutcomeYesPrice() != null) {
-            priceBefore = market.getOutcomeYesPrice();
-            log.debug("No before-ticks for market {} around news time {}, using stored price {}",
-                    market.getId(), newsTime, priceBefore);
         } else {
-            log.debug("No price data at all for market {} — skipping", market.getId());
-            return;
-        }
-
-        // Find price AFTER the news
-        Instant afterStart = newsTime.plus(Duration.ofMinutes(1));
-        Instant afterEnd = newsTime.plus(Duration.ofMinutes(corrConfig.getAfterWindowMinutes()));
-        Instant now = Instant.now();
-
-        if (now.isBefore(newsTime.plus(Duration.ofMinutes(corrConfig.getAfterWindowMinutes())))) {
-            return;
-        }
-        if (afterEnd.isAfter(now)) {
-            afterEnd = now;
-        }
-
-        // ASC order for correct time-tightness calculation
-        List<PriceTick> afterTicks = priceTickRepository
-                .findByMarketIdAndTimestampBetweenOrderByTimestampAsc(
-                        market.getId(), afterStart, afterEnd);
-
-        BigDecimal priceAfter;
-        if (!afterTicks.isEmpty()) {
-            BigDecimal maxDeviation = BigDecimal.ZERO;
-            priceAfter = afterTicks.get(afterTicks.size() - 1).getPrice(); // default to last
-            for (PriceTick tick : afterTicks) {
-                BigDecimal deviation = tick.getPrice().subtract(priceBefore).abs();
-                if (deviation.compareTo(maxDeviation) > 0) {
-                    maxDeviation = deviation;
-                    priceAfter = tick.getPrice();
-                }
+            // Try wider 24h window
+            List<PriceTick> widerTicks = priceTickRepository
+                    .findByMarketIdAndTimestampBetweenOrderByTimestampDesc(
+                            market.getId(), newsTime.minus(Duration.ofHours(24)), newsTime);
+            if (!widerTicks.isEmpty()) {
+                priceBefore = widerTicks.get(0).getPrice();
+            } else {
+                // Cannot determine pre-news price
+                return false;
             }
-        } else if (market.getOutcomeYesPrice() != null
+        }
+
+        // Price AFTER the news
+        // Use current synced price as the best representation of post-news state.
+        // Fall back to tick data if synced price is unavailable.
+        BigDecimal priceAfter;
+        if (market.getOutcomeYesPrice() != null
                 && Duration.between(newsTime, now).toMinutes() > 30) {
             priceAfter = market.getOutcomeYesPrice();
-            log.debug("No after-ticks for market {} after news time {}, using current price {}",
-                    market.getId(), newsTime, priceAfter);
         } else {
-            return;
+            Instant afterEnd = newsTime.plus(Duration.ofMinutes(corrConfig.getAfterWindowMinutes()));
+            if (afterEnd.isAfter(now)) {
+                afterEnd = now;
+            }
+
+            List<PriceTick> afterTicks = priceTickRepository
+                    .findByMarketIdAndTimestampBetweenOrderByTimestampAsc(
+                            market.getId(), newsTime, afterEnd);
+            if (!afterTicks.isEmpty()) {
+                priceAfter = afterTicks.get(afterTicks.size() - 1).getPrice();
+            } else {
+                return false;
+            }
         }
 
         BigDecimal priceDelta = priceAfter.subtract(priceBefore);
 
         if (priceDelta.abs().doubleValue() < corrConfig.getMinPriceDelta()) {
-            return;
+            log.debug("Price delta too small for market '{}': {}",
+                    truncate(market.getQuestion(), 40), priceDelta);
+            return false;
         }
 
-        // Compute confidence score
+        // Confidence score
+        // Combines LLM relevance score with price magnitude
         double magnitudeScore = Math.min(priceDelta.abs().doubleValue() / 0.10, 1.0);
-        double keywordOverlap = (double) matchingKeywords / keywords.size();
+        double confidence = (llmScore * 0.6) + (magnitudeScore * 0.4);
 
-        // Time tightness: find EARLIEST significant move (ASC order)
-        double timeTightness = 0.3;
-        for (PriceTick tick : afterTicks) {
-            double tickDelta = tick.getPrice().subtract(priceBefore).abs().doubleValue();
-            if (tickDelta > corrConfig.getMinPriceDelta() / 2) {
-                long minutesToMove = Duration.between(newsTime, tick.getTimestamp()).toMinutes();
-                timeTightness = Math.max(0, 1.0 - ((double) minutesToMove / 60.0));
-                break;
-            }
-        }
-
-        double confidence = (magnitudeScore * 0.4) + (keywordOverlap * 0.35) + (timeTightness * 0.25);
-
-        // Gentle sparse data penalty
-        int totalTicks = beforeTicks.size() + afterTicks.size();
-        if (totalTicks < 4) {
-            confidence *= 0.8;
+        // Light penalty if no tick data — relying on synced price
+        if (beforeTicks.isEmpty()) {
+            confidence *= 0.9;
         }
 
         if (confidence < corrConfig.getMinConfidence()) {
-            log.debug("Correlation below threshold: '{}' -> '{}' | delta={}, confidence={} (min={})",
-                    truncate(newsEvent.getHeadline(), 40), truncate(market.getQuestion(), 40),
-                    priceDelta, String.format("%.3f", confidence), corrConfig.getMinConfidence());
-            return;
+            return false;
         }
 
-        long timeWindowMs;
-        if (!beforeTicks.isEmpty() && !afterTicks.isEmpty()) {
-            timeWindowMs = Math.abs(Duration.between(
-                    beforeTicks.get(0).getTimestamp(),
-                    afterTicks.get(afterTicks.size() - 1).getTimestamp()).toMillis());
-        } else {
-            timeWindowMs = Duration.between(newsTime, now).toMillis();
-        }
+        long timeWindowMs = Duration.between(newsTime, now).toMillis();
 
         Correlation correlation = Correlation.builder()
                 .marketId(market.getId())
@@ -238,25 +334,33 @@ public class CorrelationEngine {
                 .timeWindowMs((int) Math.min(timeWindowMs, Integer.MAX_VALUE))
                 .confidence(BigDecimal.valueOf(confidence).setScale(3, RoundingMode.HALF_UP))
                 .detectedAt(Instant.now())
+                .reasoning(reasoning)
                 .build();
 
         correlation = correlationRepository.save(correlation);
 
-        log.info("Correlation detected: '{}' -> '{}' | delta: {}, confidence: {}, window: {}min",
-                truncate(newsEvent.getHeadline(), 50),
-                truncate(market.getQuestion(), 50),
+        log.info("✓ Correlation: '{}' → '{}' | Δ={} ({} → {}), conf={} | {}",
+                truncate(newsEvent.getHeadline(), 40),
+                truncate(market.getQuestion(), 40),
                 priceDelta.setScale(4, RoundingMode.HALF_UP),
+                priceBefore.setScale(3, RoundingMode.HALF_UP),
+                priceAfter.setScale(3, RoundingMode.HALF_UP),
                 String.format("%.3f", confidence),
-                timeWindowMs / 60000);
+                truncate(reasoning, 80));
 
         eventPublisher.publishEvent(new CorrelationDetectedEvent(
                 this, correlation.getId(), market.getId(), market.getQuestion(),
                 newsEvent.getId(), newsEvent.getHeadline(),
-                priceBefore, priceAfter, priceDelta, confidence, correlation.getDetectedAt()));
+                priceBefore, priceAfter, priceDelta, confidence, correlation.getDetectedAt(),
+                reasoning));
+
+        return true;
     }
 
     private static String truncate(String s, int maxLen) {
-        if (s == null) return "";
+        if (s == null) {
+            return "";
+        }
         return s.length() > maxLen ? s.substring(0, maxLen) + "..." : s;
     }
 }

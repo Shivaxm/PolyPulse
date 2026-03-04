@@ -34,7 +34,8 @@ public interface CorrelationRepository extends JpaRepository<Correlation, Long> 
                    c.time_window_ms, c.confidence, c.detected_at,
                    m.question AS market_question,
                    ne.headline AS news_headline, ne.source AS news_source,
-                   ne.url AS news_url, ne.published_at AS news_published_at
+                   ne.url AS news_url, ne.published_at AS news_published_at,
+                   c.reasoning
             FROM correlations c
             LEFT JOIN markets m ON m.id = c.market_id
             LEFT JOIN news_events ne ON ne.id = c.news_event_id
@@ -56,7 +57,8 @@ public interface CorrelationRepository extends JpaRepository<Correlation, Long> 
                    c.time_window_ms, c.confidence, c.detected_at,
                    m.question AS market_question,
                    ne.headline AS news_headline, ne.source AS news_source,
-                   ne.url AS news_url, ne.published_at AS news_published_at
+                   ne.url AS news_url, ne.published_at AS news_published_at,
+                   c.reasoning
             FROM correlations c
             LEFT JOIN markets m ON m.id = c.market_id
             LEFT JOIN news_events ne ON ne.id = c.news_event_id
