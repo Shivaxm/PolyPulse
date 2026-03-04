@@ -30,6 +30,7 @@ export interface CorrelationItem {
   priceDelta: number;
   confidence: number;
   detectedAt: string;
+  reasoning: string | null;
 }
 
 export interface PriceUpdate {
