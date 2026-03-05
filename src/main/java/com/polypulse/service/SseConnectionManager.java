@@ -7,7 +7,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -38,7 +37,7 @@ public class SseConnectionManager {
             emitter.send(SseEmitter.event()
                     .name("connected")
                     .data(Map.of("clientId", clientId, "connections", clients.size())));
-        } catch (IOException e) {
+        } catch (Exception e) {
             removeClient(clientId);
         }
 
@@ -52,9 +51,16 @@ public class SseConnectionManager {
     }
 
     public void removeClient(String clientId) {
-        clients.remove(clientId);
+        SseEmitter removed = clients.remove(clientId);
         marketSubscriptions.remove(clientId);
-        log.debug("SSE client disconnected: {} (total: {})", clientId, clients.size());
+        if (removed != null) {
+            try {
+                removed.complete();
+            } catch (Exception ignored) {
+                // Already completed — that's fine
+            }
+            log.debug("SSE client disconnected: {} (total: {})", clientId, clients.size());
+        }
     }
 
     public void broadcastPriceUpdate(PriceUpdateDTO update) {
@@ -69,7 +75,7 @@ public class SseConnectionManager {
                 emitter.send(SseEmitter.event()
                         .name("price_update")
                         .data(update));
-            } catch (IOException e) {
+            } catch (Exception e) {
                 removeClient(clientId);
             }
         });
@@ -88,7 +94,7 @@ public class SseConnectionManager {
                 emitter.send(SseEmitter.event()
                         .name("correlation")
                         .data(correlation));
-            } catch (IOException e) {
+            } catch (Exception e) {
                 removeClient(clientId);
             }
         });
@@ -104,7 +110,7 @@ public class SseConnectionManager {
                         .name("heartbeat")
                         .data(Map.of("timestamp", Instant.now().toString(),
                                 "connections", clients.size())));
-            } catch (IOException e) {
+            } catch (Exception e) {
                 removeClient(clientId);
             }
         });

@@ -45,12 +45,8 @@ public class MarketController {
                     .toList();
         }
 
-        Instant oneDayAgo = Instant.now().minus(Duration.ofDays(1));
-
-        Set<Long> marketsWithCorrelations = correlationRepository.findMarketIdsWithCorrelationsSince(oneDayAgo);
-
-        List<Long> allMarketIds = allActiveMarkets.stream().map(Market::getId).toList();
-        Map<Long, List<MarketDTO.SparklinePoint>> sparklines = marketCacheService.getSparklines(allMarketIds, oneDayAgo);
+        Set<Long> marketsWithCorrelations = marketCacheService.getCorrelationMarketIds();
+        Map<Long, List<MarketDTO.SparklinePoint>> sparklines = marketCacheService.getSparklines();
 
         // Get live prices from in-memory cache (instant)
         Map<Long, PriceCacheService.CachedPrice> livePrices = priceCacheService.getAllLatestPrices();

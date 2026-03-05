@@ -34,8 +34,7 @@ public class RedisConfig {
                 .cacheDefaults(defaultConfig)
                 .withInitialCacheConfigurations(Map.of(
                         "markets:active", defaultConfig.entryTtl(Duration.ofSeconds(60)),
-                        "market:detail", defaultConfig.entryTtl(Duration.ofMinutes(5)),
-                        "sparklines", defaultConfig.entryTtl(Duration.ofSeconds(30))
+                        "market:detail", defaultConfig.entryTtl(Duration.ofMinutes(5))
                 ))
                 .build();
     }
