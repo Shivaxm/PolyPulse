@@ -44,16 +44,9 @@ const Sparkline = memo(function Sparkline({
           <stop offset="0%" stopColor={color} stopOpacity={0.2} />
           <stop offset="100%" stopColor={color} stopOpacity={0} />
         </linearGradient>
-        <filter id={`${uid}-glow`}>
-          <feGaussianBlur stdDeviation="2" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
       </defs>
       <polygon points={fillPoints} fill={`url(#${uid}-fill)`} />
-      <polyline points={polylinePoints} fill="none" stroke={color} strokeWidth={1.5} filter={`url(#${uid}-glow)`} />
+      <polyline points={polylinePoints} fill="none" stroke={color} strokeWidth={1.5} />
       {/* End dot */}
       <circle
         cx={width}
