@@ -59,6 +59,7 @@ polypulse:
     min-confidence: 0.3
     max-candidate-markets: 30
     recheck-delay-minutes: 15
+    cooldown-minutes: 30
 
 anthropic:
   api-key: ${ANTHROPIC_API_KEY:}

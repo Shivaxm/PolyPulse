@@ -33,6 +33,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
@@ -134,5 +135,87 @@ class CorrelationPipelineIntegrationTest {
         int foundAgain = (int) ReflectionTestUtils.invokeMethod(correlationEngine, "checkCorrelations", newsEvent);
         assertThat(foundAgain).isEqualTo(0);
         assertThat(correlationRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void fullPipeline_marketCooldown_skipsSecondOutlet_thenAllowsLaterStory() {
+        Instant now = Instant.now();
+        Instant t0 = now.minus(Duration.ofHours(2));
+
+        Market market = marketRepository.save(Market.builder()
+                .conditionId("cond-2")
+                .clobTokenId("token-2")
+                .question("Will US impose 50% tariffs on China?")
+                .category("politics")
+                .active(true)
+                .outcomeYesPrice(null)
+                .outcomeNoPrice(null)
+                .lastSyncedAt(now)
+                .build());
+
+        priceTickRepository.save(PriceTick.builder()
+                .marketId(market.getId())
+                .price(new BigDecimal("0.45"))
+                .timestamp(t0.minus(Duration.ofMinutes(5)))
+                .build());
+        priceTickRepository.save(PriceTick.builder()
+                .marketId(market.getId())
+                .price(new BigDecimal("0.52"))
+                .timestamp(t0.plus(Duration.ofMinutes(5)))
+                .build());
+        priceTickRepository.save(PriceTick.builder()
+                .marketId(market.getId())
+                .price(new BigDecimal("0.53"))
+                .timestamp(t0.plus(Duration.ofMinutes(35)))
+                .build());
+        priceTickRepository.save(PriceTick.builder()
+                .marketId(market.getId())
+                .price(new BigDecimal("0.60"))
+                .timestamp(t0.plus(Duration.ofMinutes(50)))
+                .build());
+
+        NewsEvent first = newsEventRepository.save(NewsEvent.builder()
+                .headline("CNN: Trump announces 50% tariffs on all Chinese imports")
+                .source("CNN")
+                .url("https://example.com/news/cnn")
+                .publishedAt(t0)
+                .ingestedAt(now)
+                .keywords(List.of("trump", "announces", "tariffs", "chinese", "imports"))
+                .category("general")
+                .build());
+        NewsEvent second = newsEventRepository.save(NewsEvent.builder()
+                .headline("Reuters: Trump to impose 50% tariffs on Chinese imports")
+                .source("Reuters")
+                .url("https://example.com/news/reuters")
+                .publishedAt(t0.plus(Duration.ofMinutes(5)))
+                .ingestedAt(now)
+                .keywords(List.of("trump", "impose", "tariffs", "chinese", "imports"))
+                .category("general")
+                .build());
+        NewsEvent third = newsEventRepository.save(NewsEvent.builder()
+                .headline("BBC: White House confirms tariff timeline")
+                .source("BBC")
+                .url("https://example.com/news/bbc")
+                .publishedAt(t0.plus(Duration.ofMinutes(45)))
+                .ingestedAt(now)
+                .keywords(List.of("white", "house", "tariff", "timeline"))
+                .category("general")
+                .build());
+
+        when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
+                .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(
+                        market.getId(),
+                        "Tariff policy headlines directly impact this tariff market",
+                        0.9
+                )));
+
+        int firstFound = (int) ReflectionTestUtils.invokeMethod(correlationEngine, "checkCorrelations", first);
+        int secondFound = (int) ReflectionTestUtils.invokeMethod(correlationEngine, "checkCorrelations", second);
+        int thirdFound = (int) ReflectionTestUtils.invokeMethod(correlationEngine, "checkCorrelations", third);
+
+        assertThat(firstFound).isEqualTo(1);
+        assertThat(secondFound).isEqualTo(0); // 5 minutes later: inside 30-minute cooldown
+        assertThat(thirdFound).isEqualTo(1);  // 45 minutes later: cooldown expired
+        assertThat(correlationRepository.count()).isEqualTo(2);
     }
 }

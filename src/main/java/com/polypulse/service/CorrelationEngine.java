@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -225,6 +226,15 @@ public class CorrelationEngine {
                 continue;
             }
 
+            // Market-level cooldown suppresses same-story duplicates across outlets.
+            Instant cooldownCutoff = newsEvent.getPublishedAt()
+                    .minus(Duration.ofMinutes(corrConfig.getCooldownMinutes()));
+            if (correlationRepository.existsByMarketIdAndDetectedAtAfter(market.getId(), cooldownCutoff)) {
+                log.debug("Market {} in cooldown — skipping news '{}'",
+                        market.getId(), truncate(newsEvent.getHeadline(), 40));
+                continue;
+            }
+
             try {
                 boolean saved = evaluateAndSave(market, newsEvent, rm.reasoning(), rm.relevanceScore());
                 if (saved) {
@@ -339,11 +349,18 @@ public class CorrelationEngine {
                 .priceDelta(priceDelta)
                 .timeWindowMs((int) Math.min(timeWindowMs, Integer.MAX_VALUE))
                 .confidence(BigDecimal.valueOf(confidence).setScale(3, RoundingMode.HALF_UP))
-                .detectedAt(Instant.now())
+                // Anchor detection to article publish time so cooldown logic works for retroactive runs.
+                .detectedAt(newsTime)
                 .reasoning(reasoning)
                 .build();
 
-        correlation = correlationRepository.save(correlation);
+        try {
+            correlation = correlationRepository.save(correlation);
+        } catch (DataIntegrityViolationException e) {
+            log.debug("Duplicate correlation suppressed by DB constraint: market={}, news={}",
+                    market.getId(), newsEvent.getId());
+            return false;
+        }
 
         log.info("✓ Correlation: '{}' → '{}' | Δ={} ({} → {}), conf={} | {}",
                 truncate(newsEvent.getHeadline(), 40),

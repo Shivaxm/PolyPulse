@@ -53,5 +53,6 @@ public class PolymarketConfig {
         private double minConfidence = 0.5;
         private int maxCandidateMarkets = 20;
         private int recheckDelayMinutes = 30;
+        private int cooldownMinutes = 30;
     }
 }

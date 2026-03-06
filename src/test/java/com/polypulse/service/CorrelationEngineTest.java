@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -143,6 +144,52 @@ class CorrelationEngineTest {
     }
 
     @Test
+    void checkCorrelations_marketInCooldown_skipsSave() {
+        Market market = makeMarket(1L, "Will Trump impose tariffs?", "politics");
+        market.setOutcomeYesPrice(null);
+        NewsEvent news = makeNews(9L, "Trump tariffs", List.of("trump", "tariffs"));
+
+        when(marketRepository.findByActiveTrue()).thenReturn(List.of(market));
+        when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
+                .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct", 0.9)));
+        when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
+        when(correlationRepository.existsByMarketIdAndDetectedAtAfter(eq(1L), any())).thenReturn(true);
+
+        int found = engine.checkCorrelations(news);
+
+        assertThat(found).isEqualTo(0);
+        verify(correlationRepository, never()).save(any());
+        verifyNoInteractions(priceTickRepository);
+    }
+
+    @Test
+    void checkCorrelations_cooldownUsesNewsPublishedAtReference() {
+        Market market = makeMarket(1L, "Will Trump impose tariffs?", "politics");
+        market.setOutcomeYesPrice(null);
+        NewsEvent news = makeNews(9L, "Trump tariffs", List.of("trump", "tariffs"));
+        Instant newsTime = news.getPublishedAt();
+
+        when(marketRepository.findByActiveTrue()).thenReturn(List.of(market));
+        when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
+                .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct impact", 0.85)));
+        when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
+        when(correlationRepository.existsByMarketIdAndDetectedAtAfter(eq(1L), any())).thenReturn(false);
+        when(priceTickRepository.findByMarketIdAndTimestampBetweenOrderByTimestampDesc(eq(1L), any(), eq(newsTime)))
+                .thenReturn(List.of(makeTick(1L, new BigDecimal("0.45"), newsTime.minus(Duration.ofMinutes(1)))));
+        when(priceTickRepository.findByMarketIdAndTimestampBetweenOrderByTimestampAsc(eq(1L), eq(newsTime), any()))
+                .thenReturn(List.of(makeTick(1L, new BigDecimal("0.52"), newsTime.plus(Duration.ofMinutes(5)))));
+        when(correlationRepository.save(any(Correlation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        int found = engine.checkCorrelations(news);
+
+        assertThat(found).isEqualTo(1);
+        ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(correlationRepository).existsByMarketIdAndDetectedAtAfter(eq(1L), cutoffCaptor.capture());
+        assertThat(cutoffCaptor.getValue())
+                .isEqualTo(newsTime.minus(Duration.ofMinutes(config.getCorrelation().getCooldownMinutes())));
+    }
+
+    @Test
     void checkCorrelations_validRelevantMarket_savesAndPublishesEvent() {
         Market market = makeMarket(1L, "Will Trump impose tariffs?", "politics");
         market.setOutcomeYesPrice(null); // force after-window ticks path
@@ -152,6 +199,7 @@ class CorrelationEngineTest {
         when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
                 .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct impact", 0.85)));
         when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
+        when(correlationRepository.existsByMarketIdAndDetectedAtAfter(eq(1L), any())).thenReturn(false);
 
         Instant newsTime = news.getPublishedAt();
         when(priceTickRepository.findByMarketIdAndTimestampBetweenOrderByTimestampDesc(eq(1L), any(), eq(newsTime)))
@@ -277,6 +325,27 @@ class CorrelationEngineTest {
         verify(correlationRepository).save(cap.capture());
         // base 0.71 * 0.9 = 0.639
         assertThat(cap.getValue().getConfidence()).isEqualByComparingTo("0.639");
+    }
+
+    @Test
+    void evaluateAndSave_constraintViolation_returnsFalseAndDoesNotPublishEvent() {
+        config.getCorrelation().setMinConfidence(0.0);
+        Market market = makeMarket(1L, "Will X?", "politics");
+        market.setOutcomeYesPrice(null);
+        NewsEvent news = makeNews(1L, "Headline", List.of("headline"));
+        Instant newsTime = news.getPublishedAt();
+
+        when(priceTickRepository.findByMarketIdAndTimestampBetweenOrderByTimestampDesc(eq(1L), any(), eq(newsTime)))
+                .thenReturn(List.of(makeTick(1L, new BigDecimal("0.45"), newsTime.minus(Duration.ofMinutes(1)))));
+        when(priceTickRepository.findByMarketIdAndTimestampBetweenOrderByTimestampAsc(eq(1L), eq(newsTime), any()))
+                .thenReturn(List.of(makeTick(1L, new BigDecimal("0.50"), newsTime.plus(Duration.ofMinutes(1)))));
+        when(correlationRepository.save(any(Correlation.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate key"));
+
+        boolean saved = engine.evaluateAndSave(market, news, "reason", 0.85);
+
+        assertThat(saved).isFalse();
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     private Market makeMarket(Long id, String question, String category) {
