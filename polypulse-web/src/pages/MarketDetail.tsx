@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import type { Market, PricePoint, CorrelationItem, PagedResponse } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
+import { apiUrl } from '../config/api';
 
 const RANGES = ['1h', '6h', '24h', '7d'] as const;
 
@@ -37,23 +38,23 @@ export default function MarketDetail() {
   const { priceUpdates } = useEventStream(sseUrl ?? '');
 
   useEffect(() => {
-    fetch(`/api/markets/${id}`)
+    fetch(apiUrl(`/api/markets/${id}`))
       .then(res => { if (!res.ok) throw new Error('Not found'); return res.json(); })
-      .then(data => { setMarket(data); setSseUrl(`/api/stream/markets/${id}`); })
+      .then(data => { setMarket(data); setSseUrl(apiUrl(`/api/stream/markets/${id}`)); })
       .catch(() => navigate('/'));
   }, [id, navigate]);
 
   useEffect(() => {
     setPriceLoading(true);
     setPriceError(null);
-    fetch(`/api/markets/${id}/prices?range=${range}`)
+    fetch(apiUrl(`/api/markets/${id}/prices?range=${range}`))
       .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json(); })
       .then(data => { setPrices(Array.isArray(data) ? data : []); setPriceLoading(false); })
       .catch(err => { setPriceError(err.message); setPrices([]); setPriceLoading(false); });
   }, [id, range]);
 
   useEffect(() => {
-    fetch(`/api/markets/${id}/correlations?size=20`)
+    fetch(apiUrl(`/api/markets/${id}/correlations?size=20`))
       .then(res => res.ok ? res.json() : { content: [] })
       .then((data: PagedResponse<CorrelationItem>) => setCorrelations(data.content || []))
       .catch(() => setCorrelations([]));

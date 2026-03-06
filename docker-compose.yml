@@ -30,11 +30,15 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: jdbc:postgresql://postgres:5432/polypulse
-      DATABASE_USERNAME: polypulse
-      DATABASE_PASSWORD: polypulse
-      REDIS_HOST: redis
-      NEWS_API_KEY: ${NEWS_API_KEY:-dff5341b38394b79bcd90d444030ae96}
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: polypulse
+      PGUSER: polypulse
+      PGPASSWORD: polypulse
+      REDISHOST: redis
+      REDISPORT: 6379
+      REDISPASSWORD: ""
+      NEWS_API_KEY: ${NEWS_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     depends_on:
       postgres:

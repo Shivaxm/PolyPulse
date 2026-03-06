@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import type { Market } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
 import MarketCard from '../components/MarketCard';
+import { apiUrl } from '../config/api';
 
 const CATEGORY_COLORS: Record<string, string> = {
   politics: '#3b82f6',
@@ -26,7 +27,7 @@ export default function Dashboard() {
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('volume');
   const [page, setPage] = useState(0);
-  const { priceUpdates, isConnected } = useEventStream('/api/stream/live');
+  const { priceUpdates, isConnected } = useEventStream(apiUrl('/api/stream/live'));
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput), 250);
@@ -38,7 +39,7 @@ export default function Dashboard() {
   }, [search, activeCategory, sortBy]);
 
   useEffect(() => {
-    fetch('/api/markets')
+    fetch(apiUrl('/api/markets'))
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

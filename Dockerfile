@@ -1,20 +1,22 @@
-FROM eclipse-temurin:21-jdk-alpine AS build
+# Stage 1: Build with Maven
+FROM eclipse-temurin:21-jdk AS build
 WORKDIR /app
 
-RUN apk add --no-cache maven
+# Copy Maven wrapper and POM first (cached dependency layer)
+COPY .mvn/ .mvn/
+COPY mvnw pom.xml ./
+RUN chmod +x mvnw
+RUN ./mvnw dependency:go-offline -B
 
-COPY pom.xml .
-COPY polypulse-web/package.json polypulse-web/package-lock.json polypulse-web/
+# Copy source and build
+COPY src/ src/
+# Required by frontend-maven-plugin configured in pom.xml
+COPY polypulse-web/ polypulse-web/
+RUN ./mvnw package -DskipTests -B
 
-RUN mvn dependency:go-offline -q || true
-
-COPY src ./src
-COPY polypulse-web ./polypulse-web
-
-RUN mvn package -DskipTests -q
-
+# Stage 2: Runtime
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 COPY --from=build /app/target/polypulse-*.jar app.jar
 EXPOSE 8080
-ENTRYPOINT ["java", "-Xmx512m", "-XX:+UseG1GC", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]

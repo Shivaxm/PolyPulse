@@ -3,9 +3,9 @@ server:
 
 spring:
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/polypulse}
-    username: ${DATABASE_USERNAME:polypulse}
-    password: ${DATABASE_PASSWORD:polypulse}
+    url: jdbc:postgresql://${PGHOST:localhost}:${PGPORT:5432}/${PGDATABASE:polypulse}
+    username: ${PGUSER:polypulse}
+    password: ${PGPASSWORD:polypulse}
     hikari:
       maximum-pool-size: 15
       minimum-idle: 5
@@ -25,8 +25,9 @@ spring:
     enabled: true
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      host: ${REDISHOST:localhost}
+      port: ${REDISPORT:6379}
+      password: ${REDISPASSWORD:}
 
 logging:
   level:

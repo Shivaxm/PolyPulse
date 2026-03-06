@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CorrelationItem, PagedResponse } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
+import { apiUrl } from '../config/api';
 
 export default function Correlations() {
   const navigate = useNavigate();
@@ -9,10 +10,10 @@ export default function Correlations() {
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
-  const { correlations: liveCorrelations } = useEventStream('/api/stream/live');
+  const { correlations: liveCorrelations } = useEventStream(apiUrl('/api/stream/live'));
 
   const fetchPage = useCallback((pageNum: number) => {
-    fetch(`/api/correlations/recent?page=${pageNum}&size=20`)
+    fetch(apiUrl(`/api/correlations/recent?page=${pageNum}&size=20`))
       .then(res => res.ok ? res.json() : { content: [], last: true })
       .then((data: PagedResponse<CorrelationItem>) => {
         const items = data.content || [];
