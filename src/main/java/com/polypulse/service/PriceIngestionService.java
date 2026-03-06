@@ -1,6 +1,5 @@
 package com.polypulse.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.polypulse.config.PolymarketConfig;
 import com.polypulse.event.MarketsSyncedEvent;
@@ -18,7 +17,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
@@ -37,6 +35,7 @@ public class PriceIngestionService implements SmartLifecycle {
     private final IngestionMetrics metrics;
     private final PriceBackfillService priceBackfillService;
     private final PriceCacheService priceCacheService;
+    private final PriceMessageParser priceMessageParser;
     private final ObjectMapper objectMapper;
 
     private final BlockingQueue<PriceTick> buffer = new LinkedBlockingQueue<>(50_000);
@@ -61,6 +60,7 @@ public class PriceIngestionService implements SmartLifecycle {
                                   IngestionMetrics metrics,
                                   PriceBackfillService priceBackfillService,
                                   PriceCacheService priceCacheService,
+                                  PriceMessageParser priceMessageParser,
                                   ObjectMapper objectMapper) {
         this.marketRepository = marketRepository;
         this.priceTickBatchWriter = priceTickBatchWriter;
@@ -69,6 +69,7 @@ public class PriceIngestionService implements SmartLifecycle {
         this.metrics = metrics;
         this.priceBackfillService = priceBackfillService;
         this.priceCacheService = priceCacheService;
+        this.priceMessageParser = priceMessageParser;
         this.objectMapper = objectMapper;
     }
 
@@ -228,145 +229,13 @@ public class PriceIngestionService implements SmartLifecycle {
     }
 
     private void handleMessage(String message) {
-        try {
-            JsonNode node = objectMapper.readTree(message);
-
-            // Handle array of events
-            if (node.isArray()) {
-                for (JsonNode item : node) {
-                    processEvent(item);
-                }
-            } else {
-                processEvent(node);
-            }
-        } catch (Exception e) {
-            log.debug("Failed to parse WS message: {}", e.getMessage());
-        }
-    }
-
-    private void processEvent(JsonNode node) {
-        String eventType = node.has("event_type") ? node.get("event_type").asText() : "";
-        switch (eventType) {
-            case "last_trade_price":
-                processLastTradePrice(node);
-                break;
-            case "price_change":
-                processPriceChange(node);
-                break;
-            // "book" events are too noisy and heavy — skip
-            default:
-                break;
-        }
-    }
-
-    /**
-     * Handles last_trade_price events — emitted when a trade executes.
-     * Schema: { "event_type": "last_trade_price", "asset_id": "...", "price": "0.456", "timestamp": "1750428146322" }
-     */
-    private void processLastTradePrice(JsonNode node) {
-        String assetId = node.has("asset_id") ? node.get("asset_id").asText() : null;
-        if (assetId == null) return;
-
-        Long marketId = tokenToMarketId.get(assetId);
-        if (marketId == null) return;
-
-        try {
-            BigDecimal price = new BigDecimal(node.get("price").asText());
-            Instant timestamp = parseTimestamp(node);
-
-            saveTick(marketId, assetId, price, timestamp);
-        } catch (Exception e) {
-            log.debug("Failed to process last_trade_price: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * Handles price_change events — emitted when an order is placed or cancelled.
-     * Post Sept 2025 schema: { "event_type": "price_change", "price_changes": [{ "asset_id": "...", "best_bid": "0.5", "best_ask": "0.52" }] }
-     *
-     * Computes midpoint price from best_bid and best_ask.
-     */
-    private void processPriceChange(JsonNode node) {
-        JsonNode priceChanges = node.get("price_changes");
-        if (priceChanges == null || !priceChanges.isArray()) {
-            // Try legacy format (pre-Sept 2025): top-level asset_id + price
-            processLegacyPriceChange(node);
-            return;
-        }
-
-        Instant timestamp = parseTimestamp(node);
-
-        for (JsonNode change : priceChanges) {
-            String assetId = change.has("asset_id") ? change.get("asset_id").asText() : null;
-            if (assetId == null) continue;
-
-            Long marketId = tokenToMarketId.get(assetId);
-            if (marketId == null) continue;
-
-            try {
-                String bestBidStr = change.has("best_bid") ? change.get("best_bid").asText() : null;
-                String bestAskStr = change.has("best_ask") ? change.get("best_ask").asText() : null;
-
-                if (bestBidStr == null || bestAskStr == null) continue;
-
-                BigDecimal bestBid = new BigDecimal(bestBidStr);
-                BigDecimal bestAsk = new BigDecimal(bestAskStr);
-
-                // Midpoint price — same calculation Polymarket uses for display
-                BigDecimal price = bestBid.add(bestAsk).divide(BigDecimal.valueOf(2), 6, RoundingMode.HALF_UP);
-
-                // Skip if bid or ask is 0 (no liquidity on one side)
-                if (bestBid.compareTo(BigDecimal.ZERO) == 0 || bestAsk.compareTo(BigDecimal.ZERO) == 0) {
-                    continue;
-                }
-
-                saveTick(marketId, assetId, price, timestamp);
-            } catch (Exception e) {
-                log.debug("Failed to process price_change element: {}", e.getMessage());
+        List<PriceMessageParser.ParsedTick> ticks = priceMessageParser.parse(message, tokenToMarketId);
+        for (PriceMessageParser.ParsedTick tick : ticks) {
+            Long marketId = tokenToMarketId.get(tick.assetId());
+            if (marketId != null) {
+                saveTick(marketId, tick.assetId(), tick.price(), tick.timestamp());
             }
         }
-    }
-
-    /**
-     * Fallback for pre-Sept 2025 price_change format.
-     * Schema: { "event_type": "price_change", "asset_id": "...", "price": "0.5" }
-     */
-    private void processLegacyPriceChange(JsonNode node) {
-        String assetId = node.has("asset_id") ? node.get("asset_id").asText() : null;
-        if (assetId == null) return;
-
-        Long marketId = tokenToMarketId.get(assetId);
-        if (marketId == null) return;
-
-        JsonNode priceNode = node.get("price");
-        if (priceNode == null) return;
-
-        try {
-            BigDecimal price = new BigDecimal(priceNode.asText());
-            Instant timestamp = parseTimestamp(node);
-            saveTick(marketId, assetId, price, timestamp);
-        } catch (Exception e) {
-            log.debug("Failed to process legacy price_change: {}", e.getMessage());
-        }
-    }
-
-    private Instant parseTimestamp(JsonNode node) {
-        if (node.has("timestamp")) {
-            try {
-                String tsStr = node.get("timestamp").asText();
-                // Polymarket sends unix millis as a string
-                long tsMillis = Long.parseLong(tsStr);
-                return Instant.ofEpochMilli(tsMillis);
-            } catch (Exception e) {
-                // Try ISO format
-                try {
-                    return Instant.parse(node.get("timestamp").asText());
-                } catch (Exception ignored) {
-                    // Fallback below
-                }
-            }
-        }
-        return Instant.now();
     }
 
     private void saveTick(Long marketId, String assetId, BigDecimal price, Instant timestamp) {

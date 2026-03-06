@@ -105,3 +105,21 @@ k6 run load-tests/ingestion-stress-test.js
 - **Redis cache with per-key TTLs:** Market list (60s), market detail (5m); price history uncached (well-indexed)
 - **Keyword matching over NLP:** Simple, fast, sufficient for Polymarket's explicit market questions
 - **Single-container deploy:** Maven builds frontend + backend into one jar; no nginx needed
+
+## Tests
+
+```bash
+mvn test
+```
+
+Unit tests cover:
+- keyword extraction
+- WebSocket message parsing (legacy + post-September 2025 schema)
+- LLM prompt construction and response parsing
+- correlation engine pipeline stages (candidate selection, LLM filtering, price delta checks, confidence scoring, duplicate prevention)
+- SSE broadcast and dead emitter cleanup
+- in-memory price cache ordering guarantees
+- DTO native-row mapping
+
+Integration test:
+- full correlation pipeline with Testcontainers PostgreSQL (market + ticks + news + mocked LLM + duplicate prevention)

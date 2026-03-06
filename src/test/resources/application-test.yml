@@ -1,0 +1,11 @@
+spring:
+  cache:
+    type: none
+  flyway:
+    enabled: true
+
+polypulse:
+  sync:
+    market-interval-ms: 999999999
+  news:
+    poll-interval-ms: 999999999

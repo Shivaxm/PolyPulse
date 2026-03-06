@@ -154,7 +154,7 @@ public class CorrelationEngine {
      *
      * @return number of new correlations saved
      */
-    private int checkCorrelations(NewsEvent newsEvent) {
+    int checkCorrelations(NewsEvent newsEvent) {
         List<String> keywords = newsEvent.getKeywords();
         if (keywords == null || keywords.isEmpty()) {
             return 0;
@@ -193,8 +193,14 @@ public class CorrelationEngine {
             candidateQuestions.put(entry.getKey(), entry.getValue().getQuestion());
         }
 
-        List<LlmRelevanceService.RelevantMarket> relevantMarkets =
-                llmRelevanceService.checkRelevance(newsEvent.getHeadline(), candidateQuestions);
+        List<LlmRelevanceService.RelevantMarket> relevantMarkets;
+        try {
+            relevantMarkets = llmRelevanceService.checkRelevance(newsEvent.getHeadline(), candidateQuestions);
+        } catch (Exception e) {
+            log.warn("Stage 2: LLM relevance check failed for '{}': {}",
+                    truncate(newsEvent.getHeadline(), 60), e.getMessage());
+            return 0;
+        }
 
         if (relevantMarkets.isEmpty()) {
             log.debug("Stage 2: LLM found no relevant markets for '{}'",
@@ -238,7 +244,7 @@ public class CorrelationEngine {
      * The LLM has already confirmed semantic relevance — this just validates
      * that the market actually moved.
      */
-    private boolean evaluateAndSave(Market market, NewsEvent newsEvent,
+    boolean evaluateAndSave(Market market, NewsEvent newsEvent,
                                      String reasoning, double llmScore) {
         PolymarketConfig.Correlation corrConfig = config.getCorrelation();
         Instant newsTime = newsEvent.getPublishedAt();
