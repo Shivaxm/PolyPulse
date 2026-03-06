@@ -96,28 +96,29 @@ const MarketCard = memo(function MarketCard({ market, livePrice, categoryColor }
 
       {/* Price + Sparkline row */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.375rem' }}>
-            <span style={{
-              fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent-green)',
-              fontFamily: 'var(--font-mono)', lineHeight: 1,
-            }}>
-              Yes {yesDisplay}
-            </span>
-            {direction !== 'flat' && (
-              <span style={{
-                fontSize: '0.6875rem', fontWeight: 600, color: directionColor,
-                fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.125rem',
-              }}>
-                {direction === 'up' ? '▲' : '▼'}
-                {Math.abs(changePct).toFixed(1)}%
-              </span>
-            )}
-          </div>
-          <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <span style={{
+            fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent-green)',
+            fontFamily: 'var(--font-mono)', lineHeight: 1,
+          }}>
+            Yes {yesDisplay}
+          </span>
+          <span style={{
+            fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent-red)',
+            fontFamily: 'var(--font-mono)', lineHeight: 1,
+          }}>
             No {noDisplay}
           </span>
-        </div>
+          {direction !== 'flat' && (
+            <span style={{
+              fontSize: '0.6875rem', fontWeight: 600, color: directionColor,
+              fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.125rem',
+            }}>
+              {direction === 'up' ? '▲' : '▼'}
+              {Math.abs(changePct).toFixed(1)}%
+            </span>
+          )}
+          </div>
         <Sparkline data={sparkPrices} color={sparkColor} />
       </div>
 
@@ -130,9 +131,6 @@ const MarketCard = memo(function MarketCard({ market, livePrice, categoryColor }
           {market.volume24h != null && market.volume24h > 0
             ? `$${(market.volume24h / 1000).toFixed(1)}k vol`
             : '—'}
-        </span>
-        <span style={{ fontSize: '0.625rem', fontFamily: 'var(--font-mono)' }}>
-          Yes + No ≈ {liveYes != null && noPrice != null ? `${Math.round((yesPrice + noPrice) * 100)}¢` : '—'}
         </span>
       </div>
     </div>

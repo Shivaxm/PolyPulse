@@ -82,7 +82,10 @@ export default function MarketDetail() {
     <div>
       {/* Back button */}
       <button
-        onClick={() => navigate('/')}
+        onClick={() => {
+          if (window.history.length > 1) navigate(-1);
+          else navigate('/');
+        }}
         style={{
           color: 'var(--text-muted)', background: 'none', border: 'none',
           cursor: 'pointer', marginBottom: '1rem', fontSize: '0.8125rem',
