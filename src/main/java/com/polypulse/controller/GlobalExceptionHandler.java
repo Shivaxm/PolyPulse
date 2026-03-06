@@ -1,6 +1,7 @@
 package com.polypulse.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -11,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(MarketNotFoundException.class)
@@ -25,11 +27,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<?> handleGeneric(Exception ex, HttpServletRequest request) {
-        return buildError(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred", request);
+        // CRITICAL: Log the ACTUAL exception so we can debug
+        log.error("Unhandled exception on {} {}: {}",
+                request.getMethod(), request.getRequestURI(), ex.getMessage(), ex);
+        return buildError(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage(), request);
     }
 
     private ResponseEntity<?> buildError(HttpStatus status, String message, HttpServletRequest request) {
-        // SSE endpoints already have text/event-stream response type; avoid writing JSON bodies there.
         if (isSseRequest(request)) {
             return ResponseEntity.status(status).build();
         }
@@ -38,7 +42,8 @@ public class GlobalExceptionHandler {
         body.put("error", status.getReasonPhrase());
         body.put("message", message);
         body.put("status", status.value());
-        return ResponseEntity.status(status).body(body);
+        return body.isEmpty() ? ResponseEntity.status(status).build()
+                : ResponseEntity.status(status).body(body);
     }
 
     private boolean isSseRequest(HttpServletRequest request) {
