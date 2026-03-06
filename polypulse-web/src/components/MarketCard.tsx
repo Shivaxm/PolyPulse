@@ -11,12 +11,15 @@ interface MarketCardProps {
 
 const MarketCard = memo(function MarketCard({ market, livePrice, categoryColor }: MarketCardProps) {
   const navigate = useNavigate();
-  const price = livePrice ?? market.yesPrice ?? 0;
-  const priceDisplay = Math.round(price * 100);
+  const liveYes = livePrice ?? market.yesPrice ?? (market.noPrice != null ? 1 - market.noPrice : null);
+  const yesPrice = liveYes ?? 0;
+  const noPrice = market.noPrice ?? (liveYes != null ? 1 - liveYes : null);
+  const yesDisplay = liveYes != null ? `${Math.round(yesPrice * 100)}¢` : '—';
+  const noDisplay = noPrice != null ? `${Math.round(noPrice * 100)}¢` : '—';
 
   const sparkPrices = market.sparkline && market.sparkline.length > 1
     ? market.sparkline.map(p => p.price)
-    : [market.yesPrice ?? 0.5];
+    : [yesPrice || 0.5];
 
   // Determine price direction from sparkline
   const firstPrice = sparkPrices[0] ?? 0;
@@ -93,21 +96,27 @@ const MarketCard = memo(function MarketCard({ market, livePrice, categoryColor }
 
       {/* Price + Sparkline row */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.375rem' }}>
-          <span style={{ fontSize: '1.75rem', fontWeight: 700, color: 'white', fontFamily: 'var(--font-mono)', lineHeight: 1 }}>
-            {priceDisplay}
-          </span>
-          <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>¢</span>
-          {/* Direction change */}
-          {direction !== 'flat' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.375rem' }}>
             <span style={{
-              fontSize: '0.6875rem', fontWeight: 600, color: directionColor,
-              fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.125rem',
+              fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent-green)',
+              fontFamily: 'var(--font-mono)', lineHeight: 1,
             }}>
-              {direction === 'up' ? '▲' : '▼'}
-              {Math.abs(changePct).toFixed(1)}%
+              Yes {yesDisplay}
             </span>
-          )}
+            {direction !== 'flat' && (
+              <span style={{
+                fontSize: '0.6875rem', fontWeight: 600, color: directionColor,
+                fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.125rem',
+              }}>
+                {direction === 'up' ? '▲' : '▼'}
+                {Math.abs(changePct).toFixed(1)}%
+              </span>
+            )}
+          </div>
+          <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+            No {noDisplay}
+          </span>
         </div>
         <Sparkline data={sparkPrices} color={sparkColor} />
       </div>
@@ -123,7 +132,7 @@ const MarketCard = memo(function MarketCard({ market, livePrice, categoryColor }
             : '—'}
         </span>
         <span style={{ fontSize: '0.625rem', fontFamily: 'var(--font-mono)' }}>
-          {Math.round((1 - price) * 100)}¢ No
+          Yes + No ≈ {liveYes != null && noPrice != null ? `${Math.round((yesPrice + noPrice) * 100)}¢` : '—'}
         </span>
       </div>
     </div>

@@ -69,7 +69,9 @@ export default function MarketDetail() {
     );
   }
 
-  const livePrice = priceUpdates.get(market.id)?.price ?? market.yesPrice ?? 0;
+  const fallbackYes = market.yesPrice ?? (market.noPrice != null ? 1 - market.noPrice : null);
+  const livePrice = priceUpdates.get(market.id)?.price ?? fallbackYes ?? 0;
+  const noPrice = market.noPrice ?? (fallbackYes != null ? 1 - fallbackYes : null);
   const chartData = prices.map(p => ({
     time: formatXAxis(p.timestamp, range),
     fullTime: new Date(p.timestamp).toLocaleString(),
@@ -125,7 +127,7 @@ export default function MarketDetail() {
           </div>
           <div>
             <span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-              {Math.round((market.noPrice ?? 0) * 100)}
+              {noPrice != null ? Math.round(noPrice * 100) : '—'}
             </span>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginLeft: '0.25rem' }}>¢ No</span>
           </div>

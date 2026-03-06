@@ -26,6 +26,9 @@ public interface CorrelationRepository extends JpaRepository<Correlation, Long> 
     @Query("SELECT DISTINCT c.marketId FROM Correlation c WHERE c.detectedAt > :since")
     Set<Long> findMarketIdsWithCorrelationsSince(@Param("since") Instant since);
 
+    @Query("SELECT DISTINCT c.marketId FROM Correlation c")
+    Set<Long> findAllMarketIdsWithCorrelations();
+
     boolean existsByMarketIdAndDetectedAtAfter(Long marketId, Instant since);
 
     @Query(value = """

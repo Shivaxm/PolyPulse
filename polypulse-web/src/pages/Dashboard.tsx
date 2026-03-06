@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { Market } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
 import MarketCard from '../components/MarketCard';
@@ -22,21 +23,37 @@ export default function Dashboard() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('volume');
-  const [page, setPage] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
   const { priceUpdates, isConnected } = useEventStream(apiUrl('/api/stream/live'));
 
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchInput), 250);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
+  const search = searchParams.get('search') ?? '';
+  const activeCategory = searchParams.get('category');
+  const parsedPage = Number(searchParams.get('page') ?? '0');
+  const page = Number.isFinite(parsedPage) && parsedPage >= 0 ? Math.floor(parsedPage) : 0;
 
   useEffect(() => {
-    setPage(0);
-  }, [search, activeCategory, sortBy]);
+    setSearchInput(search);
+  }, [search]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const normalized = searchInput.trim();
+      if (normalized === search) return;
+
+      const params = new URLSearchParams(searchParams);
+      if (normalized) {
+        params.set('search', normalized);
+      } else {
+        params.delete('search');
+      }
+      params.delete('page');
+      setSearchParams(params, { replace: true });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchInput, search, searchParams, setSearchParams]);
 
   useEffect(() => {
     fetch(apiUrl('/api/markets'))
@@ -54,7 +71,6 @@ export default function Dashboard() {
       });
   }, []);
 
-  // Extract unique categories from data
   const categories = useMemo(() => {
     const cats = new Map<string, number>();
     markets.forEach(m => {
@@ -62,26 +78,22 @@ export default function Dashboard() {
       cats.set(cat, (cats.get(cat) ?? 0) + 1);
     });
     return Array.from(cats.entries())
-      .sort((a, b) => b[1] - a[1]) // sort by count descending
+      .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => ({ name, count }));
   }, [markets]);
 
-  // Filtered + sorted markets
   const filteredMarkets = useMemo(() => {
     let result = markets;
 
-    // Search filter
-    if (search.trim()) {
+    if (search) {
       const q = search.toLowerCase();
       result = result.filter(m => m.question.toLowerCase().includes(q));
     }
 
-    // Category filter
     if (activeCategory) {
       result = result.filter(m => (m.category ?? 'uncategorized').toLowerCase() === activeCategory);
     }
 
-    // Sort
     result = [...result].sort((a, b) => {
       switch (sortBy) {
         case 'volume':
@@ -100,8 +112,30 @@ export default function Dashboard() {
     return result;
   }, [markets, search, activeCategory, sortBy]);
 
-  const totalPages = Math.ceil(filteredMarkets.length / PAGE_SIZE);
-  const paginatedMarkets = filteredMarkets.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filteredMarkets.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+  const paginatedMarkets = filteredMarkets.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+
+  const setCategory = (category: string | null) => {
+    const params = new URLSearchParams(searchParams);
+    if (category) {
+      params.set('category', category);
+    } else {
+      params.delete('category');
+    }
+    params.delete('page');
+    setSearchParams(params, { replace: true });
+  };
+
+  const setPageParam = (nextPage: number) => {
+    const params = new URLSearchParams(searchParams);
+    if (nextPage > 0) {
+      params.set('page', String(nextPage));
+    } else {
+      params.delete('page');
+    }
+    setSearchParams(params, { replace: true });
+  };
 
   if (loading) {
     return (
@@ -191,7 +225,10 @@ export default function Dashboard() {
         {/* Sort */}
         <select
           value={sortBy}
-          onChange={e => setSortBy(e.target.value as SortOption)}
+          onChange={e => {
+            setSortBy(e.target.value as SortOption);
+            setPageParam(0);
+          }}
           style={{
             padding: '0.5rem 0.75rem', background: 'var(--bg-panel)',
             border: '1px solid var(--border-subtle)', borderRadius: '0.5rem',
@@ -209,13 +246,13 @@ export default function Dashboard() {
       {/* Category pills */}
       <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
         <button
-          onClick={() => setActiveCategory(null)}
+          onClick={() => setCategory(null)}
           style={{
             padding: '0.3rem 0.75rem', borderRadius: '9999px', fontSize: '0.75rem',
             fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s',
-            border: activeCategory === null ? '1px solid var(--accent-blue)' : '1px solid var(--border-subtle)',
-            background: activeCategory === null ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-panel)',
-            color: activeCategory === null ? 'var(--accent-blue)' : 'var(--text-muted)',
+            border: activeCategory == null ? '1px solid var(--accent-blue)' : '1px solid var(--border-subtle)',
+            background: activeCategory == null ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-panel)',
+            color: activeCategory == null ? 'var(--accent-blue)' : 'var(--text-muted)',
             fontFamily: 'var(--font-sans)',
           }}
         >
@@ -227,7 +264,7 @@ export default function Dashboard() {
           return (
             <button
               key={cat.name}
-              onClick={() => setActiveCategory(isActive ? null : cat.name)}
+              onClick={() => setCategory(isActive ? null : cat.name)}
               style={{
                 padding: '0.3rem 0.75rem', borderRadius: '9999px', fontSize: '0.75rem',
                 fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s',
@@ -245,11 +282,11 @@ export default function Dashboard() {
       </div>
 
       {/* Results count */}
-      {(searchInput || activeCategory) && (
+      {(search || activeCategory) && (
         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-          Showing {filteredMarkets.length === 0 ? 0 : page * PAGE_SIZE + 1}-
-          {Math.min((page + 1) * PAGE_SIZE, filteredMarkets.length)} of {filteredMarkets.length} markets
-          {searchInput && <> matching "{searchInput}"</>}
+          Showing {filteredMarkets.length === 0 ? 0 : currentPage * PAGE_SIZE + 1}-
+          {Math.min((currentPage + 1) * PAGE_SIZE, filteredMarkets.length)} of {filteredMarkets.length} markets
+          {search && <> matching "{search}"</>}
           {activeCategory && <> in <span style={{ textTransform: 'capitalize', color: CATEGORY_COLORS[activeCategory] ?? 'var(--text-secondary)' }}>{activeCategory}</span></>}
         </div>
       )}
@@ -259,7 +296,7 @@ export default function Dashboard() {
         <div style={{ textAlign: 'center', padding: '3rem 0', color: 'var(--text-muted)' }}>
           <div style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>No markets found</div>
           <div style={{ fontSize: '0.8125rem' }}>
-            {searchInput ? 'Try a different search term' : 'No markets in this category'}
+            {search ? 'Try a different search term' : 'No markets in this category'}
           </div>
         </div>
       ) : (
@@ -281,15 +318,15 @@ export default function Dashboard() {
               marginTop: '1.5rem', paddingBottom: '1rem',
             }}>
               <button
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0}
+                onClick={() => setPageParam(Math.max(0, currentPage - 1))}
+                disabled={currentPage === 0}
                 style={{
                   padding: '0.4rem 0.75rem', borderRadius: '0.375rem', fontSize: '0.8125rem',
-                  fontFamily: 'var(--font-sans)', fontWeight: 500, cursor: page === 0 ? 'default' : 'pointer',
-                  background: page === 0 ? 'var(--bg-panel)' : 'var(--bg-card)',
-                  color: page === 0 ? 'var(--text-muted)' : 'var(--text-primary)',
+                  fontFamily: 'var(--font-sans)', fontWeight: 500, cursor: currentPage === 0 ? 'default' : 'pointer',
+                  background: currentPage === 0 ? 'var(--bg-panel)' : 'var(--bg-card)',
+                  color: currentPage === 0 ? 'var(--text-muted)' : 'var(--text-primary)',
                   border: '1px solid var(--border-subtle)',
-                  opacity: page === 0 ? 0.5 : 1,
+                  opacity: currentPage === 0 ? 0.5 : 1,
                 }}
               >
                 ← Prev
@@ -299,20 +336,20 @@ export default function Dashboard() {
                 fontSize: '0.8125rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)',
                 minWidth: '6rem', textAlign: 'center',
               }}>
-                {page + 1} / {totalPages}
+                {currentPage + 1} / {totalPages}
               </span>
 
               <button
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
+                onClick={() => setPageParam(Math.min(totalPages - 1, currentPage + 1))}
+                disabled={currentPage >= totalPages - 1}
                 style={{
                   padding: '0.4rem 0.75rem', borderRadius: '0.375rem', fontSize: '0.8125rem',
                   fontFamily: 'var(--font-sans)', fontWeight: 500,
-                  cursor: page >= totalPages - 1 ? 'default' : 'pointer',
-                  background: page >= totalPages - 1 ? 'var(--bg-panel)' : 'var(--bg-card)',
-                  color: page >= totalPages - 1 ? 'var(--text-muted)' : 'var(--text-primary)',
+                  cursor: currentPage >= totalPages - 1 ? 'default' : 'pointer',
+                  background: currentPage >= totalPages - 1 ? 'var(--bg-panel)' : 'var(--bg-card)',
+                  color: currentPage >= totalPages - 1 ? 'var(--text-muted)' : 'var(--text-primary)',
                   border: '1px solid var(--border-subtle)',
-                  opacity: page >= totalPages - 1 ? 0.5 : 1,
+                  opacity: currentPage >= totalPages - 1 ? 0.5 : 1,
                 }}
               >
                 Next →

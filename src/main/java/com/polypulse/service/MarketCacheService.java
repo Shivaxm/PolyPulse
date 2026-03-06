@@ -24,7 +24,7 @@ public class MarketCacheService {
 
     private volatile List<Market> cachedMarkets = null;
     private volatile Map<Long, List<MarketDTO.SparklinePoint>> cachedSparklines = new HashMap<>();
-    private volatile Set<Long> cachedCorrelationMarketIds = new HashSet<>();
+    private volatile Set<Long> cachedCorrelationMarketIds = null;
 
     public MarketCacheService(MarketRepository marketRepository,
                                PriceTickRepository priceTickRepository,
@@ -54,7 +54,18 @@ public class MarketCacheService {
     }
 
     public Set<Long> getCorrelationMarketIds() {
-        return cachedCorrelationMarketIds;
+        Set<Long> marketIds = cachedCorrelationMarketIds;
+        if (marketIds == null) {
+            try {
+                marketIds = correlationRepository.findAllMarketIdsWithCorrelations();
+                cachedCorrelationMarketIds = marketIds;
+                log.info("Loaded correlation market IDs from DB (first request): {}", marketIds.size());
+            } catch (Exception e) {
+                log.error("Failed to load correlation market IDs from DB: {}", e.getMessage(), e);
+                return Set.of();
+            }
+        }
+        return marketIds;
     }
 
     @Scheduled(fixedDelay = 60_000, initialDelay = 5_000)
@@ -75,7 +86,9 @@ public class MarketCacheService {
                     log.warn("Sparkline computation failed: {}", e.getMessage());
                 }
                 try {
-                    cachedCorrelationMarketIds = correlationRepository.findMarketIdsWithCorrelationsSince(oneDayAgo);
+                    // Dashboard badge should reflect any correlation that exists for the market,
+                    // not just the latest paginated/recent subset.
+                    cachedCorrelationMarketIds = correlationRepository.findAllMarketIdsWithCorrelations();
                 } catch (Exception e) {
                     log.warn("Correlation IDs fetch failed: {}", e.getMessage());
                 }
