@@ -22,6 +22,7 @@ public class MarketDTO {
     private BigDecimal liquidity;
     private String category;
     private Instant createdAtSource;
+    private Instant endDate;
     private boolean hasRecentCorrelation;
     private Instant lastUpdated;
     private List<SparklinePoint> sparkline;

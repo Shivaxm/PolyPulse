@@ -307,6 +307,27 @@ public class MarketSyncService {
             } catch (Exception ignored) {}
         }
 
+        boolean isClosed = false;
+        if (marketNode.has("closed") && marketNode.get("closed").asBoolean(false)) {
+            isClosed = true;
+        }
+        if (marketNode.has("acceptingOrders") && !marketNode.get("acceptingOrders").asBoolean(true)) {
+            isClosed = true;
+        }
+
+        Instant endDate = null;
+        if (marketNode.has("endDate") && !marketNode.get("endDate").isNull()) {
+            try {
+                endDate = Instant.parse(marketNode.get("endDate").asText());
+            } catch (Exception ignored) {
+            }
+        }
+
+        boolean isExpired = isClosed || (endDate != null && endDate.isBefore(Instant.now()));
+        if (yesPrice != null && (yesPrice.doubleValue() >= 0.97 || yesPrice.doubleValue() <= 0.03)) {
+            isExpired = true;
+        }
+
         Optional<Market> existing = marketRepository.findByConditionId(conditionId);
         if (existing.isPresent()) {
             Market market = existing.get();
@@ -314,8 +335,9 @@ public class MarketSyncService {
             market.setOutcomeNoPrice(noPrice);
             market.setVolume24h(volume);
             market.setLiquidity(liquidity);
+            market.setEndDate(endDate);
             market.setLastSyncedAt(Instant.now());
-            market.setActive(true); // Re-activate if it was deactivated
+            market.setActive(!isExpired);
             if (createdAtSource != null && market.getCreatedAtSource() == null) {
                 market.setCreatedAtSource(createdAtSource);
             }
@@ -323,6 +345,10 @@ public class MarketSyncService {
             market.setCategory(category);
             marketRepository.save(market);
         } else {
+            if (isExpired) {
+                return 0;
+            }
+
             Market market = Market.builder()
                     .conditionId(conditionId)
                     .clobTokenId(clobTokenId)
@@ -334,6 +360,7 @@ public class MarketSyncService {
                     .outcomeNoPrice(noPrice)
                     .volume24h(volume)
                     .liquidity(liquidity)
+                    .endDate(endDate)
                     .createdAtSource(createdAtSource)
                     .lastSyncedAt(Instant.now())
                     .build();

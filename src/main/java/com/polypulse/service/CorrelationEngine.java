@@ -162,12 +162,24 @@ public class CorrelationEngine {
 
         List<Market> activeMarkets = marketCacheService.getActiveMarkets();
         PolymarketConfig.Correlation corrConfig = config.getCorrelation();
+        Instant newsTime = newsEvent.getPublishedAt() != null ? newsEvent.getPublishedAt() : Instant.now();
 
         // Stage 1: Keyword pre-filter
         Map<Long, Market> candidateMap = new LinkedHashMap<>();
         for (Market market : activeMarkets) {
             if (candidateMap.size() >= corrConfig.getMaxCandidateMarkets()) {
                 break;
+            }
+
+            if (market.getEndDate() != null && market.getEndDate().isBefore(newsTime)) {
+                continue;
+            }
+
+            if (market.getOutcomeYesPrice() != null) {
+                double price = market.getOutcomeYesPrice().doubleValue();
+                if (price >= 0.97 || price <= 0.03) {
+                    continue;
+                }
             }
 
             String questionLower = market.getQuestion().toLowerCase();

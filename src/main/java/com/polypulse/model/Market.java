@@ -49,6 +49,9 @@ public class Market {
     @Column(name = "created_at_source")
     private Instant createdAtSource;
 
+    @Column(name = "end_date")
+    private Instant endDate;
+
     @Column(name = "liquidity", precision = 18, scale = 2)
     private BigDecimal liquidity;
 

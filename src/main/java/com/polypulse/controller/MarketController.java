@@ -45,6 +45,14 @@ public class MarketController {
                     .toList();
         }
 
+        markets = markets.stream()
+                .filter(m -> {
+                    if (m.getOutcomeYesPrice() == null) return true;
+                    double price = m.getOutcomeYesPrice().doubleValue();
+                    return price < 0.97 && price > 0.03;
+                })
+                .toList();
+
         Set<Long> marketsWithCorrelations = marketCacheService.getCorrelationMarketIds();
         Map<Long, List<MarketDTO.SparklinePoint>> sparklines = marketCacheService.getSparklines();
 
@@ -64,6 +72,7 @@ public class MarketController {
                     .liquidity(m.getLiquidity())
                     .category(m.getCategory())
                     .createdAtSource(m.getCreatedAtSource())
+                    .endDate(m.getEndDate())
                     .hasRecentCorrelation(marketsWithCorrelations.contains(m.getId()))
                     .lastUpdated(livePrice != null ? livePrice.timestamp() : m.getLastSyncedAt())
                     .sparkline(sparklines.getOrDefault(m.getId(), List.of()))
@@ -88,6 +97,7 @@ public class MarketController {
                 .liquidity(market.getLiquidity())
                 .category(market.getCategory())
                 .createdAtSource(market.getCreatedAtSource())
+                .endDate(market.getEndDate())
                 .hasRecentCorrelation(hasCorrelation)
                 .lastUpdated(market.getLastSyncedAt())
                 .build();
