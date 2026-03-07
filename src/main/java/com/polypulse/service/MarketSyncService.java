@@ -80,13 +80,7 @@ public class MarketSyncService {
                 int pageSynced = 0;
                 for (JsonNode event : events) {
                     Instant createdAtSource = parseEventCreationDate(event);
-                    String category = "general";
-                    if (event.has("category") && !event.get("category").isNull()) {
-                        String rawCategory = event.get("category").asText("").toLowerCase().trim();
-                        if (!rawCategory.isBlank()) {
-                            category = rawCategory;
-                        }
-                    }
+                    String category = parseEventCategory(event);
 
                     JsonNode markets = event.get("markets");
                     if (markets == null || !markets.isArray()) continue;
@@ -241,6 +235,35 @@ public class MarketSyncService {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private String parseEventCategory(JsonNode event) {
+        if (event != null && event.has("category") && !event.get("category").isNull()) {
+            String rawCategory = event.get("category").asText("").toLowerCase().trim();
+            if (!rawCategory.isBlank()) {
+                return rawCategory;
+            }
+        }
+
+        if (event != null && event.has("tags") && event.get("tags").isArray()) {
+            JsonNode tags = event.get("tags");
+            for (JsonNode tag : tags) {
+                if (tag.has("slug") && !tag.get("slug").isNull()) {
+                    String slug = tag.get("slug").asText("").toLowerCase().trim();
+                    if (!slug.isBlank()) {
+                        return slug;
+                    }
+                }
+                if (tag.has("label") && !tag.get("label").isNull()) {
+                    String label = tag.get("label").asText("").toLowerCase().trim();
+                    if (!label.isBlank()) {
+                        return label;
+                    }
+                }
+            }
+        }
+
+        return "general";
     }
 
     public Instant getLastSyncAt() {
