@@ -35,14 +35,9 @@ public class MarketController {
     private final PriceCacheService priceCacheService;
 
     @GetMapping
-    public List<MarketDTO> getMarkets(@RequestParam(required = false) String category,
-                                      @RequestParam(defaultValue = "false") boolean includeResolved) {
+    public List<MarketDTO> getMarkets(@RequestParam(required = false) String category) {
         List<Market> allActiveMarkets = marketCacheService.getActiveMarkets();
-        List<Market> markets = includeResolved
-                ? allActiveMarkets
-                : allActiveMarkets.stream()
-                        .filter(m -> !Boolean.TRUE.equals(m.getResolved()))
-                        .toList();
+        List<Market> markets = allActiveMarkets;
 
         if (category != null && !category.isBlank()) {
             markets = markets.stream()
