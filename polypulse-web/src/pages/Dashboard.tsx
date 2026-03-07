@@ -16,7 +16,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   'pop-culture': '#ec4899',
 };
 
-type SortOption = 'popularity' | 'recency' | 'volume' | 'price' | 'correlation' | 'name';
+type SortOption = 'popularity' | 'recency' | 'volume' | 'name';
 const PAGE_SIZE = 24;
 
 export default function Dashboard() {
@@ -118,10 +118,6 @@ export default function Dashboard() {
         }
         case 'volume':
           return (b.volume24h ?? 0) - (a.volume24h ?? 0);
-        case 'price':
-          return (b.yesPrice ?? 0) - (a.yesPrice ?? 0);
-        case 'correlation':
-          return (b.hasRecentCorrelation ? 1 : 0) - (a.hasRecentCorrelation ? 1 : 0);
         case 'name':
           return a.question.localeCompare(b.question);
         default:
@@ -253,45 +249,54 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Sort */}
-        <select
-          value={sortBy}
-          onChange={e => {
-            setSortBy(e.target.value as SortOption);
-            setPageParam(0);
-          }}
+        {/* Sort pills */}
+        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+          {([
+            { value: 'popularity', label: 'Popular' },
+            { value: 'recency', label: 'New' },
+            { value: 'volume', label: 'Volume' },
+            { value: 'name', label: 'A–Z' },
+          ] as { value: SortOption; label: string }[]).map(opt => {
+            const isActive = sortBy === opt.value;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => { setSortBy(opt.value); setPageParam(0); }}
+                style={{
+                  padding: '0.3rem 0.625rem', borderRadius: '0.375rem', fontSize: '0.6875rem',
+                  fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s',
+                  border: `1px solid ${isActive ? 'var(--accent-blue)' : 'var(--border-subtle)'}`,
+                  background: isActive ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
+                  color: isActive ? 'var(--accent-blue)' : 'var(--text-muted)',
+                  fontFamily: 'var(--font-sans)',
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Resolved toggle */}
+        <button
+          onClick={() => setIncludeResolvedParam(!includeResolved)}
           style={{
-            padding: '0.5rem 0.75rem', background: 'var(--bg-panel)',
-            border: '1px solid var(--border-subtle)', borderRadius: '0.5rem',
-            color: 'var(--text-secondary)', fontSize: '0.8125rem',
-            fontFamily: 'var(--font-sans)', cursor: 'pointer', outline: 'none',
+            padding: '0.3rem 0.625rem', borderRadius: '0.375rem', fontSize: '0.6875rem',
+            fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s',
+            border: `1px solid ${includeResolved ? '#f59e0b60' : 'var(--border-subtle)'}`,
+            background: includeResolved ? 'rgba(245, 158, 11, 0.10)' : 'transparent',
+            color: includeResolved ? '#f59e0b' : 'var(--text-muted)',
+            fontFamily: 'var(--font-sans)',
+            display: 'flex', alignItems: 'center', gap: '0.3rem',
           }}
         >
-          <option value="popularity">Sort: Popularity</option>
-          <option value="recency">Sort: Recency</option>
-          <option value="volume">Sort: Volume</option>
-          <option value="correlation">Sort: Correlations</option>
-          <option value="price">Sort: Price</option>
-          <option value="name">Sort: A–Z</option>
-        </select>
-
-        <label style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.4rem',
-          fontSize: '0.8125rem',
-          color: 'var(--text-muted)',
-          fontFamily: 'var(--font-sans)',
-          whiteSpace: 'nowrap',
-        }}>
-          <input
-            type="checkbox"
-            checked={includeResolved}
-            onChange={e => setIncludeResolvedParam(e.target.checked)}
-            style={{ accentColor: 'var(--accent-blue)' }}
-          />
-          Show resolved
-        </label>
+          {includeResolved && (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+          Resolved
+        </button>
       </div>
 
       {/* Category pills */}
