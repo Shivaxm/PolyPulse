@@ -10,6 +10,7 @@ import com.polypulse.repository.NewsEventRepository;
 import com.polypulse.repository.PriceTickRepository;
 import com.polypulse.service.CorrelationEngine;
 import com.polypulse.service.LlmRelevanceService;
+import com.polypulse.service.MarketCacheService;
 import com.polypulse.service.MarketSyncService;
 import com.polypulse.service.NewsIngestionService;
 import com.polypulse.service.PriceIngestionService;
@@ -50,8 +51,6 @@ class CorrelationPipelineIntegrationTest {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("spring.data.redis.host", () -> "localhost");
-        registry.add("spring.data.redis.port", () -> "63790");
         registry.add("polypulse.news.api-key", () -> "");
         registry.add("anthropic.api-key", () -> "test-key");
     }
@@ -61,6 +60,7 @@ class CorrelationPipelineIntegrationTest {
     @Autowired NewsEventRepository newsEventRepository;
     @Autowired CorrelationRepository correlationRepository;
     @Autowired CorrelationEngine correlationEngine;
+    @Autowired MarketCacheService marketCacheService;
 
     @MockBean LlmRelevanceService llmRelevanceService;
     @MockBean PriceIngestionService priceIngestionService;
@@ -73,6 +73,9 @@ class CorrelationPipelineIntegrationTest {
         priceTickRepository.deleteAll();
         newsEventRepository.deleteAll();
         marketRepository.deleteAll();
+        ReflectionTestUtils.setField(marketCacheService, "cachedMarkets", null);
+        ReflectionTestUtils.setField(marketCacheService, "cachedCorrelationMarketIds", null);
+        ReflectionTestUtils.setField(marketCacheService, "cachedSparklines", new java.util.HashMap<>());
     }
 
     @Test

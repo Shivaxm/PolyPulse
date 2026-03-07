@@ -9,7 +9,6 @@ import com.polypulse.model.Market;
 import com.polypulse.model.NewsEvent;
 import com.polypulse.model.PriceTick;
 import com.polypulse.repository.CorrelationRepository;
-import com.polypulse.repository.MarketRepository;
 import com.polypulse.repository.NewsEventRepository;
 import com.polypulse.repository.PriceTickRepository;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class CorrelationEngine {
 
-    private final MarketRepository marketRepository;
+    private final MarketCacheService marketCacheService;
     private final PriceTickRepository priceTickRepository;
     private final NewsEventRepository newsEventRepository;
     private final CorrelationRepository correlationRepository;
@@ -161,7 +160,7 @@ public class CorrelationEngine {
             return 0;
         }
 
-        List<Market> activeMarkets = marketRepository.findByActiveTrue();
+        List<Market> activeMarkets = marketCacheService.getActiveMarkets();
         PolymarketConfig.Correlation corrConfig = config.getCorrelation();
 
         // Stage 1: Keyword pre-filter

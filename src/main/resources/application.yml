@@ -23,11 +23,6 @@ spring:
         order_updates: true
   flyway:
     enabled: true
-  data:
-    redis:
-      host: ${REDISHOST:localhost}
-      port: ${REDISPORT:6379}
-      password: ${REDISPASSWORD:}
 
 logging:
   level:
@@ -41,14 +36,6 @@ polypulse:
     ws-url: wss://ws-subscriptions-clob.polymarket.com/ws/market
   sync:
     market-interval-ms: 300000
-    category-tags:
-      politics: 2
-      crypto: 21
-      sports: 100639
-      finance: 120
-      tech: 1401
-      culture: 596
-      geopolitics: 100265
   news:
     api-key: ${NEWS_API_KEY:}
     poll-interval-ms: 120000

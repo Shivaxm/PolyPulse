@@ -7,7 +7,6 @@ import com.polypulse.model.Market;
 import com.polypulse.model.NewsEvent;
 import com.polypulse.model.PriceTick;
 import com.polypulse.repository.CorrelationRepository;
-import com.polypulse.repository.MarketRepository;
 import com.polypulse.repository.NewsEventRepository;
 import com.polypulse.repository.PriceTickRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +32,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class CorrelationEngineTest {
 
-    @Mock MarketRepository marketRepository;
+    @Mock MarketCacheService marketCacheService;
     @Mock PriceTickRepository priceTickRepository;
     @Mock NewsEventRepository newsEventRepository;
     @Mock CorrelationRepository correlationRepository;
@@ -54,7 +53,7 @@ class CorrelationEngineTest {
         config.getCorrelation().setMaxCandidateMarkets(30);
 
         engine = new CorrelationEngine(
-                marketRepository,
+                marketCacheService,
                 priceTickRepository,
                 newsEventRepository,
                 correlationRepository,
@@ -68,7 +67,7 @@ class CorrelationEngineTest {
     @Test
     void checkCorrelations_noKeywordMatch_llmNeverCalled() {
         NewsEvent news = makeNews(1L, "Fed signals pause", List.of("fed", "signals"));
-        when(marketRepository.findByActiveTrue()).thenReturn(List.of(
+        when(marketCacheService.getActiveMarkets()).thenReturn(List.of(
                 makeMarket(10L, "Will Trump win 2028?", "politics"),
                 makeMarket(11L, "Will Bitcoin hit 200k?", "crypto")
         ));
@@ -83,7 +82,7 @@ class CorrelationEngineTest {
     void checkCorrelations_maxCandidateMarkets_capsCandidateCount() {
         config.getCorrelation().setMaxCandidateMarkets(2);
         NewsEvent news = makeNews(1L, "Trump tariffs update", List.of("trump", "tariffs"));
-        when(marketRepository.findByActiveTrue()).thenReturn(List.of(
+        when(marketCacheService.getActiveMarkets()).thenReturn(List.of(
                 makeMarket(1L, "Will Trump win?", "politics"),
                 makeMarket(2L, "Will Trump debate Biden?", "politics"),
                 makeMarket(3L, "Will Trump visit China?", "politics")
@@ -101,7 +100,7 @@ class CorrelationEngineTest {
     @Test
     void checkCorrelations_llmReturnsEmpty_noCorrelationSaved() {
         NewsEvent news = makeNews(1L, "Trump tariffs", List.of("trump", "tariffs"));
-        when(marketRepository.findByActiveTrue()).thenReturn(List.of(
+        when(marketCacheService.getActiveMarkets()).thenReturn(List.of(
                 makeMarket(1L, "Will Trump impose tariffs?", "politics")
         ));
         when(llmRelevanceService.checkRelevance(anyString(), anyMap())).thenReturn(List.of());
@@ -115,7 +114,7 @@ class CorrelationEngineTest {
     @Test
     void checkCorrelations_llmThrows_returnsZeroAndDoesNotCrash() {
         NewsEvent news = makeNews(1L, "Trump tariffs", List.of("trump", "tariffs"));
-        when(marketRepository.findByActiveTrue()).thenReturn(List.of(
+        when(marketCacheService.getActiveMarkets()).thenReturn(List.of(
                 makeMarket(1L, "Will Trump impose tariffs?", "politics")
         ));
         when(llmRelevanceService.checkRelevance(anyString(), anyMap())).thenThrow(new RuntimeException("boom"));
@@ -132,7 +131,7 @@ class CorrelationEngineTest {
         market.setOutcomeYesPrice(null);
         NewsEvent news = makeNews(9L, "Trump tariffs", List.of("trump", "tariffs"));
 
-        when(marketRepository.findByActiveTrue()).thenReturn(List.of(market));
+        when(marketCacheService.getActiveMarkets()).thenReturn(List.of(market));
         when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
                 .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct", 0.9)));
         when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(true);
@@ -149,7 +148,7 @@ class CorrelationEngineTest {
         market.setOutcomeYesPrice(null);
         NewsEvent news = makeNews(9L, "Trump tariffs", List.of("trump", "tariffs"));
 
-        when(marketRepository.findByActiveTrue()).thenReturn(List.of(market));
+        when(marketCacheService.getActiveMarkets()).thenReturn(List.of(market));
         when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
                 .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct", 0.9)));
         when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
@@ -169,7 +168,7 @@ class CorrelationEngineTest {
         NewsEvent news = makeNews(9L, "Trump tariffs", List.of("trump", "tariffs"));
         Instant newsTime = news.getPublishedAt();
 
-        when(marketRepository.findByActiveTrue()).thenReturn(List.of(market));
+        when(marketCacheService.getActiveMarkets()).thenReturn(List.of(market));
         when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
                 .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct impact", 0.85)));
         when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
@@ -195,7 +194,7 @@ class CorrelationEngineTest {
         market.setOutcomeYesPrice(null); // force after-window ticks path
         NewsEvent news = makeNews(9L, "Trump tariffs", List.of("trump", "tariffs"));
 
-        when(marketRepository.findByActiveTrue()).thenReturn(List.of(market));
+        when(marketCacheService.getActiveMarkets()).thenReturn(List.of(market));
         when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
                 .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct impact", 0.85)));
         when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
