@@ -16,8 +16,10 @@ import org.springframework.web.client.RestTemplate;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -33,6 +35,120 @@ public class MarketSyncService {
     private final RestTemplate restTemplate;
 
     private volatile Instant lastSyncAt;
+
+    /**
+     * Maps granular Polymarket tag/category strings into a smaller set
+     * of display categories for dashboard filtering.
+     */
+    private static final Map<String, String> CATEGORY_KEYWORDS = new LinkedHashMap<>();
+    static {
+        // Politics
+        CATEGORY_KEYWORDS.put("politic", "politics");
+        CATEGORY_KEYWORDS.put("election", "politics");
+        CATEGORY_KEYWORDS.put("senate", "politics");
+        CATEGORY_KEYWORDS.put("congress", "politics");
+        CATEGORY_KEYWORDS.put("governor", "politics");
+        CATEGORY_KEYWORDS.put("parliament", "politics");
+        CATEGORY_KEYWORDS.put("cabinet", "politics");
+        CATEGORY_KEYWORDS.put("supreme-court", "politics");
+        CATEGORY_KEYWORDS.put("legislation", "politics");
+        CATEGORY_KEYWORDS.put("democrat", "politics");
+        CATEGORY_KEYWORDS.put("republican", "politics");
+        CATEGORY_KEYWORDS.put("trump", "politics");
+        CATEGORY_KEYWORDS.put("biden", "politics");
+        CATEGORY_KEYWORDS.put("presidential", "politics");
+        CATEGORY_KEYWORDS.put("primary", "politics");
+        CATEGORY_KEYWORDS.put("vote", "politics");
+
+        // Geopolitics
+        CATEGORY_KEYWORDS.put("geopolitic", "geopolitics");
+        CATEGORY_KEYWORDS.put("iran", "geopolitics");
+        CATEGORY_KEYWORDS.put("ukraine", "geopolitics");
+        CATEGORY_KEYWORDS.put("russia", "geopolitics");
+        CATEGORY_KEYWORDS.put("china", "geopolitics");
+        CATEGORY_KEYWORDS.put("war", "geopolitics");
+        CATEGORY_KEYWORDS.put("nato", "geopolitics");
+        CATEGORY_KEYWORDS.put("middle-east", "geopolitics");
+        CATEGORY_KEYWORDS.put("conflict", "geopolitics");
+        CATEGORY_KEYWORDS.put("sanctions", "geopolitics");
+        CATEGORY_KEYWORDS.put("military", "geopolitics");
+        CATEGORY_KEYWORDS.put("ceasefire", "geopolitics");
+
+        // Sports
+        CATEGORY_KEYWORDS.put("sport", "sports");
+        CATEGORY_KEYWORDS.put("nba", "sports");
+        CATEGORY_KEYWORDS.put("nfl", "sports");
+        CATEGORY_KEYWORDS.put("mlb", "sports");
+        CATEGORY_KEYWORDS.put("nhl", "sports");
+        CATEGORY_KEYWORDS.put("soccer", "sports");
+        CATEGORY_KEYWORDS.put("football", "sports");
+        CATEGORY_KEYWORDS.put("basketball", "sports");
+        CATEGORY_KEYWORDS.put("baseball", "sports");
+        CATEGORY_KEYWORDS.put("tennis", "sports");
+        CATEGORY_KEYWORDS.put("march-madness", "sports");
+        CATEGORY_KEYWORDS.put("premier-league", "sports");
+        CATEGORY_KEYWORDS.put("champions-league", "sports");
+        CATEGORY_KEYWORDS.put("world-cup", "sports");
+        CATEGORY_KEYWORDS.put("league", "sports");
+        CATEGORY_KEYWORDS.put("ncaa", "sports");
+        CATEGORY_KEYWORDS.put("ufc", "sports");
+        CATEGORY_KEYWORDS.put("boxing", "sports");
+        CATEGORY_KEYWORDS.put("f1", "sports");
+        CATEGORY_KEYWORDS.put("formula", "sports");
+
+        // Crypto
+        CATEGORY_KEYWORDS.put("crypto", "crypto");
+        CATEGORY_KEYWORDS.put("bitcoin", "crypto");
+        CATEGORY_KEYWORDS.put("ethereum", "crypto");
+        CATEGORY_KEYWORDS.put("solana", "crypto");
+        CATEGORY_KEYWORDS.put("defi", "crypto");
+        CATEGORY_KEYWORDS.put("token", "crypto");
+        CATEGORY_KEYWORDS.put("nft", "crypto");
+        CATEGORY_KEYWORDS.put("blockchain", "crypto");
+        CATEGORY_KEYWORDS.put("stablecoin", "crypto");
+        CATEGORY_KEYWORDS.put("altcoin", "crypto");
+
+        // Finance / Economy
+        CATEGORY_KEYWORDS.put("financ", "finance");
+        CATEGORY_KEYWORDS.put("econom", "finance");
+        CATEGORY_KEYWORDS.put("fed", "finance");
+        CATEGORY_KEYWORDS.put("rate-cut", "finance");
+        CATEGORY_KEYWORDS.put("interest-rate", "finance");
+        CATEGORY_KEYWORDS.put("inflation", "finance");
+        CATEGORY_KEYWORDS.put("stock", "finance");
+        CATEGORY_KEYWORDS.put("market-cap", "finance");
+        CATEGORY_KEYWORDS.put("gdp", "finance");
+        CATEGORY_KEYWORDS.put("recession", "finance");
+        CATEGORY_KEYWORDS.put("tariff", "finance");
+        CATEGORY_KEYWORDS.put("trade-war", "finance");
+        CATEGORY_KEYWORDS.put("ipo", "finance");
+        CATEGORY_KEYWORDS.put("earnings", "finance");
+
+        // Tech / AI / Science
+        CATEGORY_KEYWORDS.put("tech", "tech");
+        CATEGORY_KEYWORDS.put("ai", "tech");
+        CATEGORY_KEYWORDS.put("artificial-intelligence", "tech");
+        CATEGORY_KEYWORDS.put("openai", "tech");
+        CATEGORY_KEYWORDS.put("google", "tech");
+        CATEGORY_KEYWORDS.put("apple", "tech");
+        CATEGORY_KEYWORDS.put("spacex", "tech");
+        CATEGORY_KEYWORDS.put("science", "tech");
+        CATEGORY_KEYWORDS.put("climate", "tech");
+        CATEGORY_KEYWORDS.put("energy", "tech");
+
+        // Culture / Entertainment
+        CATEGORY_KEYWORDS.put("culture", "culture");
+        CATEGORY_KEYWORDS.put("entertainment", "culture");
+        CATEGORY_KEYWORDS.put("movie", "culture");
+        CATEGORY_KEYWORDS.put("music", "culture");
+        CATEGORY_KEYWORDS.put("oscar", "culture");
+        CATEGORY_KEYWORDS.put("celebrity", "culture");
+        CATEGORY_KEYWORDS.put("viral", "culture");
+        CATEGORY_KEYWORDS.put("social-media", "culture");
+        CATEGORY_KEYWORDS.put("pop-culture", "culture");
+        CATEGORY_KEYWORDS.put("tv", "culture");
+        CATEGORY_KEYWORDS.put("gaming", "culture");
+    }
 
     @Scheduled(fixedDelayString = "${polypulse.sync.market-interval-ms:300000}", initialDelay = 5000)
     public void syncMarkets() {
@@ -238,32 +354,46 @@ public class MarketSyncService {
     }
 
     private String parseEventCategory(JsonNode event) {
+        // First: use direct event category, if available.
         if (event != null && event.has("category") && !event.get("category").isNull()) {
             String rawCategory = event.get("category").asText("").toLowerCase().trim();
             if (!rawCategory.isBlank()) {
-                return rawCategory;
+                String normalized = normalizeCategory(rawCategory);
+                if (normalized != null) return normalized;
             }
         }
 
+        // Second: derive from tag slug/label.
         if (event != null && event.has("tags") && event.get("tags").isArray()) {
-            JsonNode tags = event.get("tags");
-            for (JsonNode tag : tags) {
-                if (tag.has("slug") && !tag.get("slug").isNull()) {
-                    String slug = tag.get("slug").asText("").toLowerCase().trim();
-                    if (!slug.isBlank()) {
-                        return slug;
-                    }
-                }
-                if (tag.has("label") && !tag.get("label").isNull()) {
-                    String label = tag.get("label").asText("").toLowerCase().trim();
-                    if (!label.isBlank()) {
-                        return label;
-                    }
-                }
+            for (JsonNode tag : event.get("tags")) {
+                String slug = tag.has("slug") ? tag.get("slug").asText("").toLowerCase().trim() : "";
+                String label = tag.has("label") ? tag.get("label").asText("").toLowerCase().trim() : "";
+
+                String normalized = normalizeCategory(slug);
+                if (normalized != null) return normalized;
+
+                normalized = normalizeCategory(label);
+                if (normalized != null) return normalized;
             }
         }
 
-        return "general";
+        // Third: fallback to title matching.
+        if (event != null && event.has("title") && !event.get("title").isNull()) {
+            String normalized = normalizeCategory(event.get("title").asText("").toLowerCase());
+            if (normalized != null) return normalized;
+        }
+
+        return "other";
+    }
+
+    private String normalizeCategory(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        for (Map.Entry<String, String> entry : CATEGORY_KEYWORDS.entrySet()) {
+            if (raw.contains(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     public Instant getLastSyncAt() {
