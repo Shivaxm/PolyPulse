@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { Market } from '../types';
 import { useEventStream } from '../hooks/useEventStream';
@@ -42,6 +42,8 @@ export default function Dashboard() {
   const [sortBy, setSortBy] = useState<SortOption>('popularity');
   const [searchInput, setSearchInput] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
+  const searchParamsRef = useRef(searchParams);
+  searchParamsRef.current = searchParams;
   const { priceUpdates, isConnected } = useEventStream(apiUrl('/api/stream/live'));
 
   const search = searchParams.get('search') ?? '';
@@ -59,7 +61,7 @@ export default function Dashboard() {
       const normalized = searchInput.trim();
       if (normalized === search) return;
 
-      const params = new URLSearchParams(searchParams);
+      const params = new URLSearchParams(searchParamsRef.current);
       if (normalized) {
         params.set('search', normalized);
       } else {
@@ -70,9 +72,10 @@ export default function Dashboard() {
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [searchInput, search, searchParams, setSearchParams]);
+  }, [searchInput, search, setSearchParams]);
 
   useEffect(() => {
+    setLoading(true);
     const url = includeResolved
       ? apiUrl('/api/markets?includeResolved=true')
       : apiUrl('/api/markets');
@@ -176,6 +179,7 @@ export default function Dashboard() {
     } else {
       params.delete('resolved');
     }
+    params.delete('category');
     params.delete('page');
     setSearchParams(params, { replace: true });
   };
