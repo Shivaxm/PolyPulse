@@ -5,7 +5,7 @@ import { useEventStream } from '../hooks/useEventStream';
 import MarketCard from '../components/MarketCard';
 import { apiUrl } from '../config/api';
 
-const CATEGORY_COLORS: Record<string, string> = {
+const KNOWN_CATEGORY_COLORS: Record<string, string> = {
   politics: '#3b82f6',
   crypto: '#f59e0b',
   sports: '#10b981',
@@ -14,7 +14,23 @@ const CATEGORY_COLORS: Record<string, string> = {
   culture: '#ec4899',
   tech: '#6366f1',
   'pop-culture': '#ec4899',
+  geopolitics: '#0ea5e9',
+  finance: '#14b8a6',
+  ai: '#a78bfa',
+  elections: '#6366f1',
+  entertainment: '#f472b6',
+  world: '#38bdf8',
 };
+
+function categoryColor(name: string): string {
+  const key = name.toLowerCase();
+  if (KNOWN_CATEGORY_COLORS[key]) return KNOWN_CATEGORY_COLORS[key];
+
+  // Generate a stable color for unknown categories.
+  let hash = 0;
+  for (const ch of key) hash = ch.charCodeAt(0) + ((hash << 5) - hash);
+  return `hsl(${Math.abs(hash) % 360}, 60%, 55%)`;
+}
 
 type SortOption = 'popularity' | 'recency' | 'volume' | 'name';
 const PAGE_SIZE = 24;
@@ -316,7 +332,7 @@ export default function Dashboard() {
         </button>
         {categories.map(cat => {
           const isActive = activeCategory === cat.name;
-          const color = CATEGORY_COLORS[cat.name] ?? '#64748b';
+          const color = categoryColor(cat.name);
           return (
             <button
               key={cat.name}
@@ -343,7 +359,7 @@ export default function Dashboard() {
           Showing {filteredMarkets.length === 0 ? 0 : currentPage * PAGE_SIZE + 1}-
           {Math.min((currentPage + 1) * PAGE_SIZE, filteredMarkets.length)} of {filteredMarkets.length} markets
           {search && <> matching "{search}"</>}
-          {activeCategory && <> in <span style={{ textTransform: 'capitalize', color: CATEGORY_COLORS[activeCategory] ?? 'var(--text-secondary)' }}>{activeCategory}</span></>}
+          {activeCategory && <> in <span style={{ textTransform: 'capitalize', color: categoryColor(activeCategory) }}>{activeCategory}</span></>}
         </div>
       )}
 
@@ -363,7 +379,7 @@ export default function Dashboard() {
                 key={market.id}
                 market={market}
                 livePrice={priceUpdates.get(market.id)?.price}
-                categoryColor={CATEGORY_COLORS[(market.category ?? '').toLowerCase()] ?? '#64748b'}
+                categoryColor={categoryColor((market.category ?? '').toLowerCase())}
               />
             ))}
           </div>
