@@ -5,6 +5,7 @@ interface SparklineProps {
   width?: number;
   height?: number;
   color?: string;
+  id?: string | number;
 }
 
 const Sparkline = memo(function Sparkline({
@@ -12,6 +13,7 @@ const Sparkline = memo(function Sparkline({
   width = 80,
   height = 36,
   color = '#6366f1',
+  id = 'default',
 }: SparklineProps) {
   if (data.length < 2) {
     const y = height / 2;
@@ -35,7 +37,7 @@ const Sparkline = memo(function Sparkline({
 
   const polylinePoints = points.join(' ');
   const fillPoints = `0,${height} ${polylinePoints} ${width},${height}`;
-  const uid = `s-${data.length}-${Math.round(data[0] * 1000)}`;
+  const uid = `spark-${id}`;
 
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ flexShrink: 0 }}>

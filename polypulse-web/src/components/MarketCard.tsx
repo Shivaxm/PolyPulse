@@ -12,14 +12,14 @@ interface MarketCardProps {
 const MarketCard = memo(function MarketCard({ market, livePrice, categoryColor }: MarketCardProps) {
   const navigate = useNavigate();
   const liveYes = livePrice ?? market.yesPrice ?? (market.noPrice != null ? 1 - market.noPrice : null);
-  const yesPrice = liveYes ?? 0;
+  const yesPrice = liveYes ?? null;
   const noPrice = market.noPrice ?? (liveYes != null ? 1 - liveYes : null);
-  const yesDisplay = liveYes != null ? `${Math.round(yesPrice * 100)}¢` : '—';
+  const yesDisplay = yesPrice != null ? `${Math.round(yesPrice * 100)}¢` : '—';
   const noDisplay = noPrice != null ? `${Math.round(noPrice * 100)}¢` : '—';
 
   const sparkPrices = market.sparkline && market.sparkline.length > 1
     ? market.sparkline.map(p => p.price)
-    : [yesPrice || 0.5];
+    : yesPrice != null ? [yesPrice] : [0.5];
 
   // Determine price direction from sparkline
   const firstPrice = sparkPrices[0] ?? 0;
@@ -119,7 +119,7 @@ const MarketCard = memo(function MarketCard({ market, livePrice, categoryColor }
             </span>
           )}
           </div>
-        <Sparkline data={sparkPrices} color={sparkColor} />
+        <Sparkline data={sparkPrices} color={sparkColor} id={market.id} />
       </div>
 
       {/* Footer: volume */}
@@ -128,7 +128,7 @@ const MarketCard = memo(function MarketCard({ market, livePrice, categoryColor }
         fontSize: '0.6875rem', color: 'var(--text-muted)',
       }}>
         <span style={{ fontFamily: 'var(--font-mono)' }}>
-          {market.volume24h != null && market.volume24h > 0
+          {market.volume24h != null && market.volume24h > 100
             ? `$${(market.volume24h / 1000).toFixed(1)}k vol`
             : '—'}
         </span>
