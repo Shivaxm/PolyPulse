@@ -46,10 +46,6 @@ public class Market {
     @Column(name = "volume_24h", precision = 18, scale = 2)
     private BigDecimal volume24h;
 
-    @Builder.Default
-    @Column(name = "resolved", nullable = false)
-    private Boolean resolved = false;
-
     @Column(name = "created_at_source")
     private Instant createdAtSource;
 

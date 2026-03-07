@@ -6,7 +6,6 @@ export interface Market {
   volume24h: number | null;
   liquidity: number | null;
   category: string | null;
-  resolved: boolean;
   createdAtSource: string | null;
   hasRecentCorrelation: boolean;
   lastUpdated: string;

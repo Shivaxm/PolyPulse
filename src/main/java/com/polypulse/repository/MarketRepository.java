@@ -12,10 +12,6 @@ public interface MarketRepository extends JpaRepository<Market, Long> {
 
     List<Market> findByActiveTrue();
 
-    List<Market> findByActiveTrueAndResolvedFalse();
-
-    List<Market> findByActiveTrueAndResolvedTrue();
-
     Optional<Market> findByConditionId(String conditionId);
 
     long countByActiveTrue();

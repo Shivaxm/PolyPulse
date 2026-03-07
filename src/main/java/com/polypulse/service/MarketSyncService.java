@@ -142,16 +142,6 @@ public class MarketSyncService {
             }
         }
 
-        Instant resolvedGracePeriod = Instant.now().minus(Duration.ofHours(24));
-        List<Market> resolvedMarkets = marketRepository.findByActiveTrueAndResolvedTrue();
-        for (Market market : resolvedMarkets) {
-            if (market.getLastSyncedAt().isBefore(resolvedGracePeriod)) {
-                market.setActive(false);
-                marketRepository.save(market);
-                deactivated++;
-            }
-        }
-
         return deactivated;
     }
 
@@ -207,11 +197,6 @@ public class MarketSyncService {
             } catch (Exception ignored) {}
         }
 
-        boolean isResolved = false;
-        if (yesPrice != null) {
-            isResolved = yesPrice.doubleValue() >= 0.95 || yesPrice.doubleValue() <= 0.05;
-        }
-
         Optional<Market> existing = marketRepository.findByConditionId(conditionId);
         if (existing.isPresent()) {
             Market market = existing.get();
@@ -219,7 +204,6 @@ public class MarketSyncService {
             market.setOutcomeNoPrice(noPrice);
             market.setVolume24h(volume);
             market.setLiquidity(liquidity);
-            market.setResolved(isResolved);
             market.setLastSyncedAt(Instant.now());
             market.setActive(true); // Re-activate if it was deactivated
             if (createdAtSource != null && market.getCreatedAtSource() == null) {
@@ -240,7 +224,6 @@ public class MarketSyncService {
                     .outcomeNoPrice(noPrice)
                     .volume24h(volume)
                     .liquidity(liquidity)
-                    .resolved(isResolved)
                     .createdAtSource(createdAtSource)
                     .lastSyncedAt(Instant.now())
                     .build();
