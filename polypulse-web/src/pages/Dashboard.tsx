@@ -16,20 +16,21 @@ const CATEGORY_COLORS: Record<string, string> = {
   'pop-culture': '#ec4899',
 };
 
-type SortOption = 'volume' | 'price' | 'correlation' | 'name';
+type SortOption = 'popularity' | 'recency' | 'volume' | 'price' | 'correlation' | 'name';
 const PAGE_SIZE = 24;
 
 export default function Dashboard() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>('volume');
+  const [sortBy, setSortBy] = useState<SortOption>('popularity');
   const [searchInput, setSearchInput] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const { priceUpdates, isConnected } = useEventStream(apiUrl('/api/stream/live'));
 
   const search = searchParams.get('search') ?? '';
   const activeCategory = searchParams.get('category');
+  const includeResolved = searchParams.get('resolved') === 'true';
   const parsedPage = Number(searchParams.get('page') ?? '0');
   const page = Number.isFinite(parsedPage) && parsedPage >= 0 ? Math.floor(parsedPage) : 0;
 
@@ -56,7 +57,10 @@ export default function Dashboard() {
   }, [searchInput, search, searchParams, setSearchParams]);
 
   useEffect(() => {
-    fetch(apiUrl('/api/markets'))
+    const url = includeResolved
+      ? apiUrl('/api/markets?includeResolved=true')
+      : apiUrl('/api/markets');
+    fetch(url)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -69,7 +73,7 @@ export default function Dashboard() {
         setError('Could not connect to backend. Is the API running on port 8080?');
         setLoading(false);
       });
-  }, []);
+  }, [includeResolved]);
 
   const categories = useMemo(() => {
     const cats = new Map<string, number>();
@@ -96,6 +100,22 @@ export default function Dashboard() {
 
     result = [...result].sort((a, b) => {
       switch (sortBy) {
+        case 'popularity': {
+          const liqA = a.liquidity;
+          const liqB = b.liquidity;
+          if (liqA == null && liqB == null) return 0;
+          if (liqA == null) return 1;
+          if (liqB == null) return -1;
+          return liqB - liqA;
+        }
+        case 'recency': {
+          const dateA = a.createdAtSource ? new Date(a.createdAtSource).getTime() : 0;
+          const dateB = b.createdAtSource ? new Date(b.createdAtSource).getTime() : 0;
+          if (dateA === 0 && dateB === 0) return 0;
+          if (dateA === 0) return 1;
+          if (dateB === 0) return -1;
+          return dateB - dateA;
+        }
         case 'volume':
           return (b.volume24h ?? 0) - (a.volume24h ?? 0);
         case 'price':
@@ -134,6 +154,17 @@ export default function Dashboard() {
     } else {
       params.delete('page');
     }
+    setSearchParams(params, { replace: true });
+  };
+
+  const setIncludeResolvedParam = (enabled: boolean) => {
+    const params = new URLSearchParams(searchParams);
+    if (enabled) {
+      params.set('resolved', 'true');
+    } else {
+      params.delete('resolved');
+    }
+    params.delete('page');
     setSearchParams(params, { replace: true });
   };
 
@@ -236,11 +267,31 @@ export default function Dashboard() {
             fontFamily: 'var(--font-sans)', cursor: 'pointer', outline: 'none',
           }}
         >
+          <option value="popularity">Sort: Popularity</option>
+          <option value="recency">Sort: Recency</option>
           <option value="volume">Sort: Volume</option>
-          <option value="price">Sort: Price</option>
           <option value="correlation">Sort: Correlations</option>
+          <option value="price">Sort: Price</option>
           <option value="name">Sort: A–Z</option>
         </select>
+
+        <label style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+          fontSize: '0.8125rem',
+          color: 'var(--text-muted)',
+          fontFamily: 'var(--font-sans)',
+          whiteSpace: 'nowrap',
+        }}>
+          <input
+            type="checkbox"
+            checked={includeResolved}
+            onChange={e => setIncludeResolvedParam(e.target.checked)}
+            style={{ accentColor: 'var(--accent-blue)' }}
+          />
+          Show resolved
+        </label>
       </div>
 
       {/* Category pills */}

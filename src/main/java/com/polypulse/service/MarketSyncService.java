@@ -114,6 +114,7 @@ public class MarketSyncService {
 
                 int pageSynced = 0;
                 for (JsonNode event : events) {
+                    Instant createdAtSource = parseEventCreationDate(event);
                     JsonNode markets = event.get("markets");
                     if (markets == null || !markets.isArray()) continue;
 
@@ -121,7 +122,7 @@ public class MarketSyncService {
                         try {
                             String conditionId = marketNode.get("conditionId").asText();
                             seenConditionIds.add(conditionId);
-                            pageSynced += processMarket(marketNode, category);
+                            pageSynced += processMarket(marketNode, category, createdAtSource);
                         } catch (Exception e) {
                             log.debug("Failed to process market: {}", e.getMessage());
                         }
@@ -164,6 +165,7 @@ public class MarketSyncService {
                 if (!events.isArray() || events.isEmpty()) break;
 
                 for (JsonNode event : events) {
+                    Instant createdAtSource = parseEventCreationDate(event);
                     JsonNode markets = event.get("markets");
                     if (markets == null || !markets.isArray()) continue;
 
@@ -183,7 +185,7 @@ public class MarketSyncService {
                             // Use event category or fall back to "general"
                             String category = (eventCategory != null && !eventCategory.isBlank())
                                     ? eventCategory : "general";
-                            totalSynced += processMarket(marketNode, category);
+                            totalSynced += processMarket(marketNode, category, createdAtSource);
                         } catch (Exception e) {
                             log.debug("Failed to process market: {}", e.getMessage());
                         }
@@ -227,10 +229,20 @@ public class MarketSyncService {
             }
         }
 
+        Instant resolvedGracePeriod = Instant.now().minus(Duration.ofHours(24));
+        List<Market> resolvedMarkets = marketRepository.findByActiveTrueAndResolvedTrue();
+        for (Market market : resolvedMarkets) {
+            if (market.getLastSyncedAt().isBefore(resolvedGracePeriod)) {
+                market.setActive(false);
+                marketRepository.save(market);
+                deactivated++;
+            }
+        }
+
         return deactivated;
     }
 
-    private int processMarket(JsonNode marketNode, String category) {
+    private int processMarket(JsonNode marketNode, String category, Instant createdAtSource) {
         String conditionId = marketNode.get("conditionId").asText();
 
         String clobTokenId;
@@ -275,14 +287,31 @@ public class MarketSyncService {
             } catch (Exception ignored) {}
         }
 
+        BigDecimal liquidity = null;
+        if (marketNode.has("liquidity")) {
+            try {
+                liquidity = new BigDecimal(marketNode.get("liquidity").asText("0"));
+            } catch (Exception ignored) {}
+        }
+
+        boolean isResolved = false;
+        if (yesPrice != null) {
+            isResolved = yesPrice.doubleValue() >= 0.95 || yesPrice.doubleValue() <= 0.05;
+        }
+
         Optional<Market> existing = marketRepository.findByConditionId(conditionId);
         if (existing.isPresent()) {
             Market market = existing.get();
             market.setOutcomeYesPrice(yesPrice);
             market.setOutcomeNoPrice(noPrice);
             market.setVolume24h(volume);
+            market.setLiquidity(liquidity);
+            market.setResolved(isResolved);
             market.setLastSyncedAt(Instant.now());
             market.setActive(true); // Re-activate if it was deactivated
+            if (createdAtSource != null && market.getCreatedAtSource() == null) {
+                market.setCreatedAtSource(createdAtSource);
+            }
             // Always update category — tag-based categories are more reliable
             market.setCategory(category);
             marketRepository.save(market);
@@ -297,11 +326,25 @@ public class MarketSyncService {
                     .outcomeYesPrice(yesPrice)
                     .outcomeNoPrice(noPrice)
                     .volume24h(volume)
+                    .liquidity(liquidity)
+                    .resolved(isResolved)
+                    .createdAtSource(createdAtSource)
                     .lastSyncedAt(Instant.now())
                     .build();
             marketRepository.save(market);
         }
         return 1;
+    }
+
+    private Instant parseEventCreationDate(JsonNode event) {
+        if (event == null || !event.has("creationDate") || event.get("creationDate").isNull()) {
+            return null;
+        }
+        try {
+            return Instant.parse(event.get("creationDate").asText());
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private String summarizeCategories(Set<String> seen) {
