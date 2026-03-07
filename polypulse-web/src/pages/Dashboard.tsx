@@ -48,6 +48,7 @@ export default function Dashboard() {
 
   const search = searchParams.get('search') ?? '';
   const activeCategory = searchParams.get('category');
+  const includeResolved = searchParams.get('resolved') === 'true';
   const parsedPage = Number(searchParams.get('page') ?? '0');
   const page = Number.isFinite(parsedPage) && parsedPage >= 0 ? Math.floor(parsedPage) : 0;
 
@@ -75,7 +76,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(apiUrl('/api/markets'))
+    const url = includeResolved
+      ? apiUrl('/api/markets?includeResolved=true')
+      : apiUrl('/api/markets');
+    fetch(url)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -88,7 +92,7 @@ export default function Dashboard() {
         setError('Could not connect to backend. Is the API running on port 8080?');
         setLoading(false);
       });
-  }, []);
+  }, [includeResolved]);
 
   const categories = useMemo(() => {
     const cats = new Map<string, number>();
@@ -165,6 +169,18 @@ export default function Dashboard() {
     } else {
       params.delete('page');
     }
+    setSearchParams(params, { replace: true });
+  };
+
+  const setIncludeResolvedParam = (enabled: boolean) => {
+    const params = new URLSearchParams(searchParams);
+    if (enabled) {
+      params.set('resolved', 'true');
+    } else {
+      params.delete('resolved');
+    }
+    params.delete('category');
+    params.delete('page');
     setSearchParams(params, { replace: true });
   };
 
@@ -281,6 +297,26 @@ export default function Dashboard() {
           })}
         </div>
 
+        {/* Resolved toggle */}
+        <button
+          onClick={() => setIncludeResolvedParam(!includeResolved)}
+          style={{
+            padding: '0.3rem 0.625rem', borderRadius: '0.375rem', fontSize: '0.6875rem',
+            fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s',
+            border: `1px solid ${includeResolved ? '#f59e0b60' : 'var(--border-subtle)'}`,
+            background: includeResolved ? 'rgba(245, 158, 11, 0.10)' : 'transparent',
+            color: includeResolved ? '#f59e0b' : 'var(--text-muted)',
+            fontFamily: 'var(--font-sans)',
+            display: 'flex', alignItems: 'center', gap: '0.3rem',
+          }}
+        >
+          {includeResolved && (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+          Resolved
+        </button>
       </div>
 
       {/* Category pills */}

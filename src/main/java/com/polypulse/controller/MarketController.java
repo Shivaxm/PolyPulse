@@ -35,9 +35,14 @@ public class MarketController {
     private final PriceCacheService priceCacheService;
 
     @GetMapping
-    public List<MarketDTO> getMarkets(@RequestParam(required = false) String category) {
+    public List<MarketDTO> getMarkets(@RequestParam(required = false) String category,
+                                      @RequestParam(defaultValue = "false") boolean includeResolved) {
         List<Market> allActiveMarkets = marketCacheService.getActiveMarkets();
-        List<Market> markets = allActiveMarkets;
+        List<Market> markets = includeResolved
+                ? allActiveMarkets
+                : allActiveMarkets.stream()
+                        .filter(m -> !Boolean.TRUE.equals(m.getResolved()))
+                        .toList();
 
         if (category != null && !category.isBlank()) {
             markets = markets.stream()
@@ -63,6 +68,7 @@ public class MarketController {
                     .volume24h(m.getVolume24h())
                     .liquidity(m.getLiquidity())
                     .category(m.getCategory())
+                    .resolved(Boolean.TRUE.equals(m.getResolved()))
                     .createdAtSource(m.getCreatedAtSource())
                     .hasRecentCorrelation(marketsWithCorrelations.contains(m.getId()))
                     .lastUpdated(livePrice != null ? livePrice.timestamp() : m.getLastSyncedAt())
@@ -87,6 +93,7 @@ public class MarketController {
                 .volume24h(market.getVolume24h())
                 .liquidity(market.getLiquidity())
                 .category(market.getCategory())
+                .resolved(Boolean.TRUE.equals(market.getResolved()))
                 .createdAtSource(market.getCreatedAtSource())
                 .hasRecentCorrelation(hasCorrelation)
                 .lastUpdated(market.getLastSyncedAt())

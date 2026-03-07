@@ -21,6 +21,7 @@ public class MarketDTO {
     private BigDecimal volume24h;
     private BigDecimal liquidity;
     private String category;
+    private boolean resolved;
     private Instant createdAtSource;
     private boolean hasRecentCorrelation;
     private Instant lastUpdated;
