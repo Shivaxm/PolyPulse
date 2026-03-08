@@ -38,7 +38,7 @@ polypulse:
     market-interval-ms: 300000
   news:
     api-key: ${NEWS_API_KEY:}
-    poll-interval-ms: 120000
+    poll-interval-ms: 900000
     provider: newsapi
   correlation:
     min-price-delta: 0.01

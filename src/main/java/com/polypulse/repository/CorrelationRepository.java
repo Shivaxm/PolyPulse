@@ -32,6 +32,17 @@ public interface CorrelationRepository extends JpaRepository<Correlation, Long> 
     boolean existsByMarketIdAndDetectedAtAfter(Long marketId, Instant since);
 
     @Query(value = """
+            SELECT COUNT(*) > 0
+            FROM correlations c
+            JOIN news_events ne ON ne.id = c.news_event_id
+            WHERE c.market_id = :marketId
+              AND ne.published_at > :since
+            """, nativeQuery = true)
+    boolean existsRecentCorrelationByNewsPublishTime(
+            @Param("marketId") Long marketId,
+            @Param("since") Instant since);
+
+    @Query(value = """
             SELECT c.id, c.market_id, c.news_event_id,
                    c.price_before, c.price_after, c.price_delta,
                    c.time_window_ms, c.confidence, c.detected_at,

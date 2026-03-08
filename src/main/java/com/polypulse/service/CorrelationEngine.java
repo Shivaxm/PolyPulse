@@ -160,9 +160,15 @@ public class CorrelationEngine {
             return 0;
         }
 
+        Instant newsTime = newsEvent.getPublishedAt() != null ? newsEvent.getPublishedAt() : Instant.now();
+        if (Instant.now().isBefore(newsTime.plus(Duration.ofMinutes(15)))) {
+            log.debug("Article too fresh (< 15min), deferring to retroactive check: '{}'",
+                    truncate(newsEvent.getHeadline(), 60));
+            return 0;
+        }
+
         List<Market> activeMarkets = marketCacheService.getActiveMarkets();
         PolymarketConfig.Correlation corrConfig = config.getCorrelation();
-        Instant newsTime = newsEvent.getPublishedAt() != null ? newsEvent.getPublishedAt() : Instant.now();
 
         // Stage 1: Keyword pre-filter
         Map<Long, Market> candidateMap = new LinkedHashMap<>();
@@ -192,7 +198,7 @@ public class CorrelationEngine {
         }
 
         if (candidateMap.isEmpty()) {
-            log.debug("No keyword candidates for: '{}'", truncate(newsEvent.getHeadline(), 60));
+            log.info("No keyword candidates for: '{}'", truncate(newsEvent.getHeadline(), 60));
             return 0;
         }
 
@@ -215,7 +221,7 @@ public class CorrelationEngine {
         }
 
         if (relevantMarkets.isEmpty()) {
-            log.debug("Stage 2: LLM found no relevant markets for '{}'",
+            log.info("Stage 2: LLM found no relevant markets for '{}'",
                     truncate(newsEvent.getHeadline(), 60));
             return 0;
         }
@@ -238,9 +244,9 @@ public class CorrelationEngine {
             }
 
             // Market-level cooldown suppresses same-story duplicates across outlets.
-            Instant cooldownCutoff = newsEvent.getPublishedAt()
-                    .minus(Duration.ofMinutes(corrConfig.getCooldownMinutes()));
-            if (correlationRepository.existsByMarketIdAndDetectedAtAfter(market.getId(), cooldownCutoff)) {
+            Instant cooldownCutoff = newsTime.minus(Duration.ofMinutes(corrConfig.getCooldownMinutes()));
+            if (correlationRepository.existsRecentCorrelationByNewsPublishTime(
+                    market.getId(), cooldownCutoff)) {
                 log.debug("Market {} in cooldown — skipping news '{}'",
                         market.getId(), truncate(newsEvent.getHeadline(), 40));
                 continue;
@@ -270,11 +276,6 @@ public class CorrelationEngine {
         PolymarketConfig.Correlation corrConfig = config.getCorrelation();
         Instant newsTime = newsEvent.getPublishedAt();
         Instant now = Instant.now();
-
-        // Must have at least 15 minutes of post-news time
-        if (now.isBefore(newsTime.plus(Duration.ofMinutes(15)))) {
-            return false;
-        }
 
         // Backfill historical price data
         try {
@@ -360,8 +361,7 @@ public class CorrelationEngine {
                 .priceDelta(priceDelta)
                 .timeWindowMs((int) Math.min(timeWindowMs, Integer.MAX_VALUE))
                 .confidence(BigDecimal.valueOf(confidence).setScale(3, RoundingMode.HALF_UP))
-                // Anchor detection to article publish time so cooldown logic works for retroactive runs.
-                .detectedAt(newsTime)
+                .detectedAt(Instant.now())
                 .reasoning(reasoning)
                 .build();
 

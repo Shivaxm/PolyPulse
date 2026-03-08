@@ -152,7 +152,7 @@ class CorrelationEngineTest {
         when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
                 .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct", 0.9)));
         when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
-        when(correlationRepository.existsByMarketIdAndDetectedAtAfter(eq(1L), any())).thenReturn(true);
+        when(correlationRepository.existsRecentCorrelationByNewsPublishTime(eq(1L), any())).thenReturn(true);
 
         int found = engine.checkCorrelations(news);
 
@@ -172,7 +172,7 @@ class CorrelationEngineTest {
         when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
                 .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct impact", 0.85)));
         when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
-        when(correlationRepository.existsByMarketIdAndDetectedAtAfter(eq(1L), any())).thenReturn(false);
+        when(correlationRepository.existsRecentCorrelationByNewsPublishTime(eq(1L), any())).thenReturn(false);
         when(priceTickRepository.findByMarketIdAndTimestampBetweenOrderByTimestampDesc(eq(1L), any(), eq(newsTime)))
                 .thenReturn(List.of(makeTick(1L, new BigDecimal("0.45"), newsTime.minus(Duration.ofMinutes(1)))));
         when(priceTickRepository.findByMarketIdAndTimestampBetweenOrderByTimestampAsc(eq(1L), eq(newsTime), any()))
@@ -183,7 +183,7 @@ class CorrelationEngineTest {
 
         assertThat(found).isEqualTo(1);
         ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
-        verify(correlationRepository).existsByMarketIdAndDetectedAtAfter(eq(1L), cutoffCaptor.capture());
+        verify(correlationRepository).existsRecentCorrelationByNewsPublishTime(eq(1L), cutoffCaptor.capture());
         assertThat(cutoffCaptor.getValue())
                 .isEqualTo(newsTime.minus(Duration.ofMinutes(config.getCorrelation().getCooldownMinutes())));
     }
@@ -198,7 +198,7 @@ class CorrelationEngineTest {
         when(llmRelevanceService.checkRelevance(anyString(), anyMap()))
                 .thenReturn(List.of(new LlmRelevanceService.RelevantMarket(1L, "Direct impact", 0.85)));
         when(correlationRepository.existsByMarketIdAndNewsEventId(1L, 9L)).thenReturn(false);
-        when(correlationRepository.existsByMarketIdAndDetectedAtAfter(eq(1L), any())).thenReturn(false);
+        when(correlationRepository.existsRecentCorrelationByNewsPublishTime(eq(1L), any())).thenReturn(false);
 
         Instant newsTime = news.getPublishedAt();
         when(priceTickRepository.findByMarketIdAndTimestampBetweenOrderByTimestampDesc(eq(1L), any(), eq(newsTime)))
