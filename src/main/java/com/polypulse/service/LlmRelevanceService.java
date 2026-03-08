@@ -82,6 +82,8 @@ REJECT these common false positives:
 - Same broad sector (e.g. "Dow Jones falls" does NOT directly affect "Will specific crypto token reach $X valuation" — general market sentiment is too indirect)
 - General economic news matched to unrelated markets (e.g. "US wholesale prices rise" does NOT affect "Harvey Weinstein sentenced" or "US-Russia military clash")
 - Sharing a keyword like "US", "China", "Trump", or "market" is NOT enough — the news must be ABOUT the specific question the market asks
+- News about REACTIONS or CONSEQUENCES of an event is NOT the same as news about the event itself (e.g. "Wall Street drops amid Iran war" is about financial markets reacting — it does NOT affect "Will Iran strike Israel on March 9?" because stock market performance doesn't change the probability of a military strike. Similarly, "Oil prices surge due to Middle East tensions" does NOT affect specific geopolitical outcome markets)
+- The headline must provide information about whether the specific OUTCOME in the market question is more or less likely. Ask: "Does this headline contain new facts about WHETHER the thing will happen?" If it only describes consequences of something already happening, it is NOT a direct match
 
 When in doubt, do NOT include the market. It is much better to return an empty array than to include a weak connection.
 
@@ -106,7 +108,7 @@ Respond with ONLY the JSON array, no other text.""");
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", "claude-haiku-4-5-20251001");
         body.put("max_tokens", 1024);
-        body.put("system", "You are a strict financial relevance classifier. You ONLY return markets that have a direct, specific, first-order causal connection to the news headline. You are skeptical by default and prefer returning an empty array over including weak or indirect connections. General market conditions, shared geography, or shared sector are NEVER sufficient.");
+        body.put("system", "You are a strict financial relevance classifier. You ONLY return markets that have a direct, specific, first-order causal connection to the news headline. You are skeptical by default and prefer returning an empty array over including weak or indirect connections. General market conditions, shared geography, shared sector, or downstream consequences of events are NEVER sufficient. A headline must provide new information about WHETHER the market's outcome will happen — not merely reference the same topic in a different context.");
         body.put("messages", List.of(Map.of("role", "user", "content", prompt)));
 
         try {
