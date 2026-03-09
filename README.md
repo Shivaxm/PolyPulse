@@ -47,30 +47,18 @@ Real-time prediction market dashboard that correlates news events with Polymarke
 
 ## Scale & Performance
 
-Load tested with [k6](https://k6.io/) against the live Railway deployment at up to 1,000 concurrent virtual users.
-
-### Results at 1,000 Concurrent Users
-
-| Test | Peak VUs | p95 Latency | p99 Latency | Error Rate | Throughput |
-|------|----------|-------------|-------------|------------|------------|
-| API Stress | 500 | 86 ms | 109 ms | 0% | 108 req/s |
-| SSE Connections | 1,000 | 92 ms | — | 0% | 63 req/s |
-| Realistic (mixed) | 1,000 | 90 ms | — | 0% | 121 req/s |
+Load tested with [k6](https://k6.io/) against the live Railway deployment — 1,000 concurrent users (mixed API requests + SSE connections), **90ms p95 latency, 0% error rate, 121 req/s sustained throughput.**
 
 ### Before vs After: In-Memory Caching
 
-Without caching, the system crashes at 500 concurrent users. With caching, it handles 1,000.
+| Metric | Before (no cache) | After (in-memory cache) |
+|--------|-------------------|-------------------------|
+| Concurrent users | 500 (crashed) | **1,000 (sustained)** |
+| p95 Latency | 15,020 ms | **90 ms** |
+| Error Rate | 100% | **0%** |
+| Throughput | 13 req/s | **121 req/s** |
 
-| Metric | Without Cache (DB direct) | With Cache (in-memory) | Improvement |
-|--------|--------------------------|------------------------|-------------|
-| p95 Latency | 15,020 ms | 86 ms | **175x faster** |
-| Error Rate | 100% (502 crash) | 0% | **Total recovery** |
-| Throughput | 13 req/s | 108 req/s | **8.3x higher** |
-| Outcome | App killed by platform | 1,000 VUs sustained | - |
-
-**Root cause:** Without caching, concurrent users exhaust the HikariCP connection pool (15 max connections). Every `/api/markets` request opens a DB connection, queries ~600 rows, and holds the connection while serializing. At 500 VUs, requests queue behind the pool, timeouts cascade, and the application crashes with 502s.
-
-**Fix:** `MarketCacheService` precomputes the market list, sparklines, and correlation IDs every 60 seconds on a background thread. API reads serve from a `ConcurrentHashMap` — zero DB queries per page load, zero connection pool pressure.
+Without caching, 500 concurrent users exhaust the HikariCP connection pool (15 connections). Requests queue, timeouts cascade, and the app crashes with 502s. `MarketCacheService` fixes this by precomputing market data every 60 seconds on a background thread — API reads serve from a `ConcurrentHashMap`, eliminating all DB queries per page load.
 
 ### Horizontal Scalability
 
