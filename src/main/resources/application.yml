@@ -23,6 +23,26 @@ spring:
         order_updates: true
   flyway:
     enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:${REDISHOST:localhost}}
+      port: ${REDIS_PORT:${REDISPORT:6379}}
+      password: ${REDIS_PASSWORD:${REDISPASSWORD:}}
+
+management:
+  endpoints:
+    web:
+      base-path: /api/actuator
+      exposure:
+        include: health,metrics,prometheus
+  metrics:
+    tags:
+      application: polypulse
+    distribution:
+      percentiles-histogram:
+        "[http.server.requests]": true
+      percentiles:
+        "[http.server.requests]": 0.5, 0.95, 0.99
 
 logging:
   level:
@@ -48,6 +68,8 @@ polypulse:
     max-candidate-markets: 30
     recheck-delay-minutes: 15
     cooldown-minutes: 30
+  redis:
+    enabled: ${REDIS_ENABLED:false}
 
 anthropic:
   api-key: ${ANTHROPIC_API_KEY:}

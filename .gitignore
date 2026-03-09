@@ -42,3 +42,4 @@ build/
 node_modules/
 polypulse-web/node_modules/
 polypulse-web/dist/
+loadtest/results/

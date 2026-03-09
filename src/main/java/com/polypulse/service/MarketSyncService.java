@@ -276,6 +276,7 @@ public class MarketSyncService {
         }
 
         String question = marketNode.has("question") ? marketNode.get("question").asText() : "";
+        if (question.isBlank()) return 0;
         String slug = marketNode.has("slug") ? marketNode.get("slug").asText(null) : null;
 
         BigDecimal yesPrice = null;
@@ -345,7 +346,7 @@ public class MarketSyncService {
             market.setCategory(category);
             marketRepository.save(market);
         } else {
-            if (isExpired) {
+            if (isExpired || yesPrice == null) {
                 return 0;
             }
 

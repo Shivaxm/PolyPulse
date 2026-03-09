@@ -47,7 +47,8 @@ public class MarketController {
 
         markets = markets.stream()
                 .filter(m -> {
-                    if (m.getOutcomeYesPrice() == null) return true;
+                    if (m.getOutcomeYesPrice() == null) return false;
+                    if (m.getQuestion() == null || m.getQuestion().isBlank()) return false;
                     double price = m.getOutcomeYesPrice().doubleValue();
                     return price < 0.97 && price > 0.03;
                 })
