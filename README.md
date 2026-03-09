@@ -1,55 +1,49 @@
 # PolyPulse
 
-Real-time prediction market dashboard that correlates news events with Polymarket price movements using a two-stage ML pipeline (keyword pre-filter + Claude Haiku LLM validation).
+A real-time dashboard that watches 600+ Polymarket prediction markets, ingests breaking news, and uses an LLM to detect when a news event moves a market's price. Think Bloomberg Terminal meets prediction markets.
 
 **Live:** https://polypulse.up.railway.app
 
+## How It Works
+
+1. A WebSocket connection streams live prices from Polymarket's orderbook for every active market
+2. A news poller pulls headlines from NewsAPI every 15 minutes
+3. When a new headline arrives, a two-stage pipeline finds affected markets:
+   - **Stage 1 (instant):** Keyword extraction filters 600+ markets down to ~15 candidates
+   - **Stage 2 (LLM):** A single Claude Haiku batch call determines which markets are *actually* affected, with reasoning (e.g., distinguishing "Florida" in a SpaceX launch vs. a Panthers game)
+4. For each validated match, it checks if the market price moved within a time window around the article and records the correlation with confidence score
+5. Everything streams to the frontend via Server-Sent Events in real time
+
 ## Architecture
 
-```text
-                     React Frontend (SSE)
-                           |
-                     Load Balancer
-                      /         \
-               Instance A    Instance B
-                    |              |
-              Spring Boot     Spring Boot
-                    \             /
-                   Redis Pub/Sub
-                  (event fanout)
-                   /           \
-     Price Ingestion    News Ingestion
-      (WebSocket)       (REST Poller)
-           |                  |
-           v                  v
-      Polymarket           NewsAPI
-       WS Feed
-           \                /
-            \              /
-         Correlation Engine
-        (keyword + LLM pipeline)
-                |
-                v
-           PostgreSQL
+```
+    Browser (React + SSE)
+            |
+    +-------+-------+
+    |  Spring Boot   |
+    |  REST + SSE    |-----> /api/markets, /api/correlations, /api/stream/live
+    +---+---+---+---+
+        |   |   |
+        |   |   +-- MarketCacheService -------> ConcurrentHashMap (refreshed every 60s)
+        |   |
+        |   +------ Correlation Engine
+        |           1. Keyword pre-filter (O(n), instant)
+        |           2. Claude Haiku batch call (single API request)
+        |           3. Price delta check (before/after news timestamp)
+        |
+        +---------- Price Ingestion
+        |           WebSocket -> in-memory cache (instant)
+        |                     -> 50k bounded queue -> batch INSERT every 1s
+        |
+        +---------- News Ingestion
+                    REST poll every 15min -> keyword extraction -> correlation trigger
+
+    External:       Polymarket WS    NewsAPI    Claude Haiku    PostgreSQL    Redis
 ```
 
-## Tech Stack
+## Performance
 
-- **Backend:** Java 21, Spring Boot 3.4, Spring Data JPA, Spring Events
-- **Database:** PostgreSQL 16+ (Flyway migrations, HikariCP connection pool)
-- **Cache:** In-memory ConcurrentHashMap with 60s background refresh
-- **Message Bus:** Redis Pub/Sub for cross-instance SSE event fanout
-- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS, Recharts
-- **Real-time:** WebSocket (upstream from Polymarket), Server-Sent Events (downstream to clients)
-- **Observability:** Micrometer percentile histograms, custom /api/metrics endpoint
-- **Load Testing:** k6 (API stress, SSE connections, realistic scenario)
-- **Deployment:** Docker (single container), Railway
-
-## Scale & Performance
-
-Load tested with [k6](https://k6.io/) against the live Railway deployment — 1,000 concurrent users (mixed API requests + SSE connections), **90ms p95 latency, 0% error rate, 121 req/s sustained throughput.**
-
-### Before vs After: In-Memory Caching
+Tested with [k6](https://k6.io/) against the live Railway deployment.
 
 | Metric | Before (no cache) | After (in-memory cache) |
 |--------|-------------------|-------------------------|
@@ -58,98 +52,54 @@ Load tested with [k6](https://k6.io/) against the live Railway deployment — 1,
 | Error Rate | 100% | **0%** |
 | Throughput | 13 req/s | **121 req/s** |
 
-Without caching, 500 concurrent users exhaust the HikariCP connection pool (15 connections). Requests queue, timeouts cascade, and the app crashes with 502s. `MarketCacheService` fixes this by precomputing market data every 60 seconds on a background thread — API reads serve from a `ConcurrentHashMap`, eliminating all DB queries per page load.
+**What happened without caching:** Every page load queried PostgreSQL for 600+ markets. At 500 concurrent users, all 15 HikariCP connections were permanently occupied. New requests waited for a connection, timed out after 5 seconds, and the cascade took down the entire app (Railway returned 502s).
 
-### Horizontal Scalability
+**What the cache does:** `MarketCacheService` runs a background thread that queries the database once every 60 seconds and stores the result in a `ConcurrentHashMap`. All API reads serve from memory. The database connection pool never sees user traffic for the heaviest endpoint.
 
-Redis Pub/Sub decouples event producers from SSE consumers. Price updates and correlation events publish to Redis channels; every app instance subscribes and fans out to its local SSE clients. This enables N instances behind a load balancer, each serving thousands of SSE connections independently.
+**Horizontal scaling:** Redis Pub/Sub sits between event producers (price ingestion, correlation engine) and SSE consumers (browser connections). Each app instance subscribes to Redis channels and broadcasts to its local clients. This means you can run N instances behind a load balancer without duplicating events or splitting connections. Enabled with `REDIS_ENABLED=true`, falls back to in-process broadcast when off.
 
-Enabled via `REDIS_ENABLED=true` with graceful fallback to local broadcast when disabled.
+## Design Decisions
 
-### Load Test Suite
+**Why sample price writes at 15-second intervals instead of writing every tick?**
+Polymarket's WebSocket sends thousands of ticks per second across 600 markets. Writing all of them would require ~3,000 INSERT/s sustained, which is expensive and unnecessary for historical charts. Instead, ticks update an in-memory cache instantly (so the live dashboard is always current), and only one tick per market per 15 seconds goes to the database via a batched native JDBC INSERT. This cuts write volume by 95% while keeping the live view real-time.
 
-```bash
-# Install k6
-brew install k6
+**Why a two-stage correlation pipeline instead of sending everything to the LLM?**
+Cost and latency. Running 600 markets through Claude for every headline would cost ~$50/month and take seconds. The keyword pre-filter runs in microseconds and eliminates 97% of candidates. The LLM only sees ~15 plausible matches per headline, keeping costs under $2/month and latency under 2 seconds. The keyword stage catches obvious matches; the LLM stage catches false positives the keywords can't (like "Turkey" matching both geopolitics and cooking markets).
 
-# Run all tests against live deployment
-./loadtest/run-all.sh https://polypulse.up.railway.app
+**Why SSE instead of WebSocket for the frontend?**
+The frontend only receives data, never sends it. SSE is simpler (just HTTP), auto-reconnects natively in the browser, works through corporate proxies that block WebSocket upgrades, and doesn't require a separate protocol upgrade handshake. One less thing to debug in production.
 
-# Run individual tests
-k6 run -e BASE_URL=https://polypulse.up.railway.app loadtest/scripts/api-load.js
-k6 run -e BASE_URL=https://polypulse.up.railway.app loadtest/scripts/sse-connections.js
-k6 run -e BASE_URL=https://polypulse.up.railway.app loadtest/scripts/realistic-scenario.js
-```
+**Why Redis Pub/Sub instead of Kafka?**
+This is an event fanout problem, not a durable message queue problem. If a price update is missed during a brief disconnect, the next one arrives in seconds. Redis Pub/Sub is operationally simple (one `docker-compose` service), has sub-millisecond latency, and solves the actual problem: letting multiple app instances broadcast the same events to their local SSE clients. Kafka would add ZooKeeper, partitions, consumer groups, and offset management for a problem that doesn't need any of that.
 
-## Key Design Decisions
+**Why one JAR instead of separate frontend/backend deploys?**
+Maven builds the React app during `package` and copies the dist into the JAR's static resources. One container, one deploy, one health check. No nginx, no CORS in production, no separate CDN config. For a project of this size, the operational simplicity outweighs any scaling benefit of splitting them.
 
-- **50k bounded queue with 15-second sampling:** Real-time prices update in-memory instantly; DB writes are sampled to ~1 tick per market per 15 seconds via native JDBC batch INSERT, reducing write volume 95%
-- **Two-stage correlation pipeline:** Cheap keyword pre-filter narrows 600+ markets to ~15 candidates, then a single Claude Haiku batch call validates semantic relevance. Keeps LLM costs under $2/month while eliminating false positives
-- **In-memory background precomputation:** Market list and sparklines are computed every 60 seconds on a background thread. API reads from memory — zero DB queries per page load
-- **Redis Pub/Sub over Kafka:** Lightweight event fanout for SSE broadcasting without the operational overhead of a message broker. Feature-flagged for single-instance deployments
-- **SSE over WebSocket for frontend:** Client only receives data; SSE is simpler, auto-reconnects, works through proxies
-- **Spring Events as internal bus:** Loose coupling between ingestion, correlation, and broadcast without external dependencies
-- **WebSocket dual-format parsing:** Handles both pre and post September 2025 Polymarket `price_change` schemas with automatic format detection
-- **Single-container deploy:** Maven builds frontend + backend into one jar; no nginx needed
+## Tech Stack
+
+Java 21, Spring Boot 3.4, PostgreSQL 16, Redis 7, React 19, TypeScript, Vite, Tailwind CSS, Recharts, Docker, Railway
 
 ## Quick Start
 
-### Prerequisites
-
-- Java 21
-- Docker & Docker Compose
-
-### Run with Docker Compose
-
 ```bash
+# Run everything
 NEWS_API_KEY=your-key ANTHROPIC_API_KEY=your-key docker compose up --build
+
+# Open http://localhost:8080
 ```
 
-Open http://localhost:8080
+Both API keys are optional. Without `NEWS_API_KEY`, news ingestion is disabled. Without `ANTHROPIC_API_KEY`, correlations use keyword matching only (no LLM validation).
 
-### Development Mode
-
-```bash
-# Start postgres + redis
-docker compose up postgres redis -d
-
-# Start backend (project root)
-NEWS_API_KEY=your-key ANTHROPIC_API_KEY=your-key ./mvnw spring-boot:run
-
-# Start frontend (separate terminal)
-cd polypulse-web
-npm install
-npm run dev
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `PGHOST` | Yes | PostgreSQL host |
-| `PGPORT` | Yes | PostgreSQL port |
-| `PGDATABASE` | Yes | PostgreSQL database name |
-| `PGUSER` | Yes | PostgreSQL user |
-| `PGPASSWORD` | Yes | PostgreSQL password |
-| `NEWS_API_KEY` | No | NewsAPI key (news ingestion disabled if blank) |
-| `ANTHROPIC_API_KEY` | No | Anthropic API key (LLM validation disabled if blank) |
-| `REDIS_HOST` | No | Redis host (defaults to localhost) |
-| `REDIS_PORT` | No | Redis port (defaults to 6379) |
-| `REDIS_ENABLED` | No | Enable Redis Pub/Sub (defaults to false) |
-
-## API Endpoints
+## API
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/health` | Service health + ingestion metrics |
-| `GET /api/metrics` | Server-side latency percentiles + connection pool stats |
 | `GET /api/markets` | Active markets with live prices and sparklines |
-| `GET /api/markets/{id}` | Single market detail |
 | `GET /api/markets/{id}/prices?range=24h` | Price history (1h, 6h, 24h, 7d) |
-| `GET /api/markets/{id}/correlations` | Correlations for one market |
-| `GET /api/correlations/recent` | Latest correlations across markets |
-| `GET /api/stream/live` | SSE stream: price updates + correlations |
-| `GET /api/stream/markets/{id}` | SSE stream for one market |
+| `GET /api/markets/{id}/correlations` | News correlations for a market |
+| `GET /api/correlations/recent` | Latest correlations across all markets |
+| `GET /api/stream/live` | SSE stream of price updates and new correlations |
+| `GET /api/health` | Ingestion metrics, connection status, uptime |
 
 ## Tests
 
@@ -157,14 +107,13 @@ npm run dev
 mvn test
 ```
 
-Unit tests cover:
+Unit tests cover the correlation pipeline (keyword extraction, LLM prompt/response parsing, candidate filtering, price delta calculation, confidence scoring, deduplication), WebSocket message parsing for both Polymarket schema versions, SSE connection lifecycle, and price cache consistency. Integration test runs the full pipeline against a Testcontainers PostgreSQL instance.
 
-- Keyword extraction and stopword filtering
-- WebSocket message parsing (legacy + post-September 2025 schema)
-- LLM prompt construction and response parsing
-- Correlation engine stages (candidate selection, LLM filtering, price delta, confidence, duplicate prevention)
-- SSE emitter cleanup behavior
-- In-memory price cache ordering guarantees
-- DTO native-row mapping
+## Load Tests
 
-Integration test covers full correlation pipeline with Testcontainers PostgreSQL.
+```bash
+brew install k6
+./loadtest/run-all.sh https://polypulse.up.railway.app
+```
+
+Three test profiles: API stress (500 VUs ramping), SSE connection saturation (1,000 VUs), and a realistic mixed scenario with a spike test injection.
