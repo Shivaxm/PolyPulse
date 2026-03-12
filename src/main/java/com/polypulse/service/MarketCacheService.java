@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -102,24 +104,51 @@ public class MarketCacheService {
         }
     }
 
+    /**
+     * Purge price_ticks older than 7 days to prevent unbounded table growth.
+     * Runs every 6 hours.
+     */
+    @Scheduled(fixedDelay = 6 * 60 * 60 * 1000, initialDelay = 60_000)
+    @Transactional
+    public void purgeOldPriceTicks() {
+        try {
+            Instant cutoff = Instant.now().minus(Duration.ofDays(7));
+            int deleted = priceTickRepository.deleteOlderThan(cutoff);
+            if (deleted > 0) {
+                log.info("Purged {} price_ticks older than 7 days", deleted);
+            }
+        } catch (Exception e) {
+            log.error("Failed to purge old price_ticks: {}", e.getMessage(), e);
+        }
+    }
+
     private Map<Long, List<MarketDTO.SparklinePoint>> computeSparklines(List<Long> marketIds, Instant oneDayAgo) {
         Map<Long, List<MarketDTO.SparklinePoint>> sparklines = new HashMap<>();
         if (marketIds.isEmpty()) return sparklines;
 
-        List<Object[]> rows = priceTickRepository.findSparklineData(marketIds, oneDayAgo);
-        for (Object[] row : rows) {
-            Long marketId = ((Number) row[0]).longValue();
-            Instant ts;
-            if (row[1] instanceof java.sql.Timestamp sqlTs) {
-                ts = sqlTs.toInstant();
-            } else if (row[1] instanceof java.time.OffsetDateTime odt) {
-                ts = odt.toInstant();
-            } else {
-                ts = Instant.parse(row[1].toString());
+        // Batch into chunks to avoid enormous IN clauses that crash the DB
+        int batchSize = 200;
+        for (int i = 0; i < marketIds.size(); i += batchSize) {
+            List<Long> batch = marketIds.subList(i, Math.min(i + batchSize, marketIds.size()));
+            try {
+                List<Object[]> rows = priceTickRepository.findSparklineData(batch, oneDayAgo);
+                for (Object[] row : rows) {
+                    Long marketId = ((Number) row[0]).longValue();
+                    Instant ts;
+                    if (row[1] instanceof java.sql.Timestamp sqlTs) {
+                        ts = sqlTs.toInstant();
+                    } else if (row[1] instanceof java.time.OffsetDateTime odt) {
+                        ts = odt.toInstant();
+                    } else {
+                        ts = Instant.parse(row[1].toString());
+                    }
+                    BigDecimal price = (BigDecimal) row[2];
+                    sparklines.computeIfAbsent(marketId, k -> new ArrayList<>())
+                            .add(MarketDTO.SparklinePoint.builder().timestamp(ts).price(price).build());
+                }
+            } catch (Exception e) {
+                log.warn("Sparkline batch {}-{} failed: {}", i, i + batch.size(), e.getMessage());
             }
-            BigDecimal price = (BigDecimal) row[2];
-            sparklines.computeIfAbsent(marketId, k -> new ArrayList<>())
-                    .add(MarketDTO.SparklinePoint.builder().timestamp(ts).price(price).build());
         }
         return sparklines;
     }
