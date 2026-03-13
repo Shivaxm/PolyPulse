@@ -270,7 +270,7 @@ export default function Dashboard() {
                   padding: '0.3rem 0.625rem', borderRadius: '0.375rem', fontSize: '0.6875rem',
                   fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s',
                   border: `1px solid ${isActive ? 'var(--accent-blue)' : 'var(--border-subtle)'}`,
-                  background: isActive ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
+                  background: isActive ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
                   color: isActive ? 'var(--accent-blue)' : 'var(--text-muted)',
                   fontFamily: 'var(--font-sans)',
                 }}
@@ -291,7 +291,7 @@ export default function Dashboard() {
             padding: '0.3rem 0.75rem', borderRadius: '9999px', fontSize: '0.75rem',
             fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s',
             border: activeCategory == null ? '1px solid var(--accent-blue)' : '1px solid var(--border-subtle)',
-            background: activeCategory == null ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-panel)',
+            background: activeCategory == null ? 'rgba(139, 92, 246, 0.15)' : 'var(--bg-panel)',
             color: activeCategory == null ? 'var(--accent-blue)' : 'var(--text-muted)',
             fontFamily: 'var(--font-sans)',
           }}

@@ -109,7 +109,7 @@ export default function MarketDetail() {
         {market.category && (
           <span style={{
             fontSize: '0.625rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em',
-            color: 'var(--accent-blue)', background: 'rgba(59, 130, 246, 0.12)', padding: '0.15rem 0.5rem',
+            color: 'var(--accent-blue)', background: 'rgba(139, 92, 246, 0.12)', padding: '0.15rem 0.5rem',
             borderRadius: '9999px', marginBottom: '0.5rem', display: 'inline-block',
           }}>
             {market.category}

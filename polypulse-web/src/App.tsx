@@ -18,7 +18,7 @@ export default function App() {
         <header style={{
           position: 'sticky', top: 0, zIndex: 50,
           borderBottom: '1px solid var(--border-subtle)',
-          background: 'rgba(10, 14, 23, 0.85)',
+          background: 'rgba(13, 10, 20, 0.85)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
         }}>
@@ -26,7 +26,7 @@ export default function App() {
             <NavLink to="/" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none' }}>
               <div style={{
                 width: '1.75rem', height: '1.75rem', borderRadius: '0.5rem',
-                background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '0.75rem', fontWeight: 700, color: 'white',
                 fontFamily: 'var(--font-mono)',
