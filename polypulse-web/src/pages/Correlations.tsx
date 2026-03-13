@@ -107,13 +107,13 @@ export default function Correlations() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
                   <div
                     style={{
-                      fontSize: '0.875rem', fontWeight: 600, color: 'var(--accent-blue)',
+                      fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)',
                       cursor: 'pointer', lineHeight: 1.4,
                       transition: 'color 0.15s',
                     }}
                     onClick={() => c.market && navigate(`/market/${c.market.id}`)}
-                    onMouseEnter={e => (e.currentTarget.style.color = '#60a5fa')}
-                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--accent-blue)')}
+                    onMouseEnter={e => (e.currentTarget.style.color = '#c4b5fd')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-primary)')}
                   >
                     {c.market?.question ?? 'Unknown market'}
                   </div>
