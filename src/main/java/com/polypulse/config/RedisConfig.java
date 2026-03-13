@@ -8,8 +8,6 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
-import org.springframework.data.redis.listener.adapter.MessageListenerAdapter;
-import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 @Configuration
 @ConditionalOnProperty(name = "polypulse.redis.enabled", havingValue = "true")
@@ -30,13 +28,8 @@ public class RedisConfig {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
 
-        MessageListenerAdapter priceAdapter = new MessageListenerAdapter(subscriber, "onPriceMessage");
-        priceAdapter.setSerializer(new StringRedisSerializer());
-        container.addMessageListener(priceAdapter, new ChannelTopic(PRICE_CHANNEL));
-
-        MessageListenerAdapter correlationAdapter = new MessageListenerAdapter(subscriber, "onCorrelationMessage");
-        correlationAdapter.setSerializer(new StringRedisSerializer());
-        container.addMessageListener(correlationAdapter, new ChannelTopic(CORRELATION_CHANNEL));
+        container.addMessageListener(subscriber, new ChannelTopic(PRICE_CHANNEL));
+        container.addMessageListener(subscriber, new ChannelTopic(CORRELATION_CHANNEL));
 
         return container;
     }
