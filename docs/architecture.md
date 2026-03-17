@@ -4,6 +4,104 @@ PolyPulse is a real-time prediction market dashboard that ingests live prices fr
 
 ---
 
+## System Design
+
+### What the system does
+
+PolyPulse solves one problem: show a user every active prediction market with live prices, and surface the moments when a breaking news headline causes a market to move. The browser must feel instant — prices update in real time without polling, the dashboard loads in under 200ms, and AI-detected correlations appear within seconds of the news breaking.
+
+### Why the system is shaped this way
+
+The architecture is split into four independent subsystems that communicate through Spring application events and a shared PostgreSQL database:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Browser (React SPA)                         │
+│                                                                     │
+│  Dashboard.tsx ──── GET /api/markets ────── REST (one-time load)   │
+│       │                                                             │
+│       └──────────── EventSource /api/stream/live ── SSE (ongoing)  │
+│                         │                                           │
+│              price_update  correlation  heartbeat                   │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                    ┌─────────┴──────────┐
+                    │   Spring Boot API   │
+                    │  (single deployable) │
+                    └──┬──────┬──────┬───┘
+                       │      │      │
+          ┌────────────┘      │      └────────────┐
+          │                   │                    │
+  ┌───────┴────────┐  ┌──────┴───────┐  ┌────────┴─────────┐
+  │ Price Ingestion │  │ News Ingestion│  │ Correlation Engine│
+  │                 │  │               │  │                   │
+  │ 1 WebSocket to  │  │ HTTP poll to  │  │ Keyword pre-filter│
+  │ Polymarket CLOB │  │ NewsAPI every │  │ + Claude Haiku    │
+  │ for all markets │  │ 15 minutes    │  │ + price delta     │
+  └───────┬────────┘  └──────┬───────┘  └────────┬─────────┘
+          │                   │                    │
+          │  PriceTickEvent   │ NewsIngestedEvent  │ CorrelationDetectedEvent
+          │  (Spring @Async)  │ (Spring sync)      │ (Spring sync)
+          │                   │                    │
+  ┌───────┴───────────────────┴────────────────────┴───────┐
+  │                    SseEventBridge                        │
+  │  Converts internal events → SSE payloads                │
+  │  Throttles prices to 1/sec/market                       │
+  │                                                         │
+  │  ┌─── Redis enabled? ───┐                               │
+  │  │ YES: publish to Redis │  NO: broadcast directly      │
+  │  │ pub/sub channels      │  via SseConnectionManager    │
+  │  └──────────┬────────────┘                               │
+  │             │                                            │
+  │  RedisEventSubscriber                                   │
+  │  (on every backend instance)                            │
+  │             │                                            │
+  │  SseConnectionManager.broadcast()                       │
+  │  → iterates all SseEmitters, sends named events         │
+  └─────────────────────────────────────────────────────────┘
+          │                   │
+  ┌───────┴────────┐  ┌──────┴──────────────────────────────┐
+  │ In-Memory Caches│  │           PostgreSQL                 │
+  │                 │  │                                      │
+  │ PriceCacheService│ │ markets ← MarketSyncService (5 min) │
+  │ (ConcurrentHash │  │ price_ticks ← batch writer (1s)     │
+  │  Map, per tick) │  │ news_events ← NewsIngestionService   │
+  │                 │  │ correlations ← CorrelationEngine     │
+  │ MarketCacheService│ │                                     │
+  │ (volatile fields,│ │ Purged: price_ticks >7 days (6h job)│
+  │  rebuilt 60s)   │  │                                      │
+  └─────────────────┘  └─────────────────────────────────────┘
+```
+
+**Why one deployable?** PolyPulse runs on Railway's hobby tier. A single Spring Boot JAR keeps infrastructure costs at one web service + one PostgreSQL instance + one optional Redis. The subsystems are logically separate (different `@Service` classes, no shared mutable state, event-driven communication) but deploy as one process. If traffic outgrows a single instance, the Redis pub/sub path already exists to fan out SSE events across replicas — no code changes required.
+
+**Why Spring events instead of direct method calls?** Decoupling. `PriceIngestionService` doesn't know `SseEventBridge` exists. It publishes a `PriceTickEvent` and moves on. This means the price ingestion path (WebSocket → cache → DB buffer) never blocks on SSE broadcast failures. If `SseEventBridge` throws, the price is already cached and buffered — the only impact is a missed SSE frame, which the next tick replaces in under a second.
+
+**Why two caching layers (PriceCacheService + MarketCacheService)?** They serve different access patterns:
+- `PriceCacheService` is a hot write cache — updated on every WebSocket tick (hundreds/sec), read by `MarketController` to overlay live prices on the REST response. It's a `ConcurrentHashMap` because writes must be lock-free and nanosecond-fast.
+- `MarketCacheService` is a cold read cache — rebuilt every 60 seconds by querying PostgreSQL for sparklines, active markets, and correlation flags. It uses `volatile` fields so that the `@Scheduled` rebuild atomically swaps the entire dataset. `MarketController` reads from it on every `/api/markets` request with zero DB queries.
+
+**Why SSE instead of polling?** The dashboard must show price changes as they happen. Polling every second for 600 markets would mean 600 requests/second per client. SSE pushes only the markets that changed, using one persistent HTTP connection per client.
+
+### What happens when each component fails
+
+The system is designed so that no single component failure takes down the dashboard. Each subsystem degrades independently:
+
+| Component | Failure Mode | Impact | Recovery |
+|-----------|-------------|--------|----------|
+| **Polymarket WebSocket** | Connection drops | No new prices flow. In-memory cache serves the last known price. Dashboard shows stale data but doesn't break. SSE heartbeats keep the browser connected. | Exponential backoff reconnect (1s→30s cap). On reconnect, gap detection triggers backfill if 2–60 min elapsed. |
+| **PostgreSQL** | Connection refused / pool exhausted | `MarketCacheService` refresh fails — stale volatile caches continue serving. Batch writer drops ticks (in-memory cache unaffected). New correlations can't be saved. REST `/api/markets` still works from cache. | HikariCP retries on next request. Cache continues serving. Batch writer resumes when pool recovers. |
+| **Redis pub/sub** | Redis down | `RedisEventPublisher.publish()` throws — caught by `SseEventBridge`, logged, event dropped. SSE clients on *this* instance still get direct broadcasts as fallback. Clients on *other* instances see no updates until Redis recovers. | Redis reconnects automatically via Spring's `RedisMessageListenerContainer`. No manual intervention. |
+| **NewsAPI / GNews** | HTTP error / rate limit | `NewsIngestionService` catches the exception, logs it, and waits for the next 15-minute poll cycle. No correlations generated for that cycle. Markets and prices unaffected. | Next poll retries. Category rotation means a failed "business" poll doesn't block the next "technology" poll. |
+| **Claude Haiku (LLM)** | API key missing / API error | `LlmRelevanceService` returns empty list. Keyword pre-filter still runs but no correlations pass stage 2. Dashboard shows markets and prices normally, just no AI-detected correlations. | If API key is missing: permanent graceful degradation. If API error: next news cycle retries the batch. |
+| **SSE client disconnect** | Browser closes / network drop | `SseEmitter` callbacks (`onCompletion`, `onTimeout`, `onError`) trigger `removeClient()`. Emitter is removed from the map and completed. No resource leak. | Browser `EventSource` auto-reconnects natively. New `SseEmitter` created on reconnect. |
+| **Batch writer queue full** | 50,000 ticks buffered | New ticks silently dropped (logged every 1,000th). In-memory cache and SSE broadcasts are unaffected — only historical DB records are lost. | `PriceBackfillService` fills gaps from Polymarket's REST API when a user opens a market's price chart. |
+| **MarketSyncService** | Polymarket Gamma API down | No new markets discovered. Existing markets continue with stale metadata. Staleness cleanup has a 2-hour buffer to avoid false deactivations from partial sync failures. | Next 5-minute sync retries. Existing market data remains valid. |
+
+**Key principle:** The in-memory caches (`PriceCacheService` and `MarketCacheService`) act as a buffer between external failures and the user experience. Even if PostgreSQL, Redis, and every external API go down simultaneously, the dashboard continues to serve the last known state from memory. Prices freeze but the page doesn't error.
+
+---
+
 ## End-to-End Data Flows
 
 Three primary data flows drive the entire application:
