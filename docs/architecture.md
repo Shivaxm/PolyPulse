@@ -83,6 +83,119 @@ The architecture is split into four independent subsystems that communicate thro
 
 **Why SSE instead of polling?** The dashboard must show price changes as they happen. Polling every second for 600 markets would mean 600 requests/second per client. SSE pushes only the markets that changed, using one persistent HTTP connection per client.
 
+### How SSE connects the backend to the browser
+
+SSE (Server-Sent Events) is the mechanism that pushes live data from the backend to the browser. Here is exactly what connects to what, what data travels over the connection, and who is on each end:
+
+```
+Browser (React)                                            Spring Boot
+─────────────────                                          ────────────
+Dashboard.tsx mounts
+  → useEventStream hook creates:
+    new EventSource("/api/stream/live")       ──HTTP GET──►  StreamController
+                                                             .streamLive()
+                                                                │
+    This is a long-lived HTTP connection.                        │
+    The browser opens it once and keeps                          ▼
+    it open. The server pushes events                   SseConnectionManager
+    down the same connection whenever                   .registerClient()
+    new data is available.                                      │
+                                                         Creates SseEmitter
+                                                         (5-min timeout)
+                                                         Stores in clients Map
+                                                         Sends "connected" event
+                                                                │
+                                                                ▼
+    EventSource receives named events:          SseConnectionManager.broadcast*()
+    ┌──────────────────────────────┐            pushes events to every emitter:
+    │                              │
+    │  "connected"     → on open   │◄────────── sent once on connection
+    │  "price_update"  → per tick  │◄────────── sent when a market price changes
+    │  "correlation"   → per match │◄────────── sent when AI detects news moved a market
+    │  "heartbeat"     → every 30s │◄────────── keeps connection alive through proxies
+    │                              │
+    └──────────────────────────────┘
+
+    useEventStream buffers incoming
+    events and flushes to React state
+    every 1 second.
+```
+
+**Who triggers each event on the server side:**
+
+- **`price_update`**: `PriceIngestionService` receives a tick from the Polymarket WebSocket → publishes a `PriceTickEvent` (Spring application event) → `SseEventBridge.onPriceTick()` listens for that event, throttles it to 1/sec/market, builds a `PriceUpdateDTO { marketId, price, timestamp }`, and hands it to `SseConnectionManager.broadcastPriceUpdate()` → the manager iterates every connected `SseEmitter` and calls `emitter.send()`.
+- **`correlation`**: `CorrelationEngine` finishes validating a news-market link → publishes a `CorrelationDetectedEvent` → `SseEventBridge.onCorrelationDetected()` builds a `CorrelationDTO { id, market, news, priceDelta, confidence, reasoning }` and hands it to `SseConnectionManager.broadcastCorrelation()`.
+- **`heartbeat`**: `SseConnectionManager` itself runs a `@Scheduled(fixedDelay = 30000)` job that sends a timestamp to every connected emitter. This exists because load balancers and proxies close idle HTTP connections — the heartbeat proves the connection is still active.
+
+**Who consumes each event on the browser side:**
+
+- **`price_update`**: `Dashboard.tsx` reads `priceUpdates.get(market.id)?.price` and passes it to each `MarketCard` as the `livePrice` prop. The card shows the live Yes/No price. `MarketDetail.tsx` uses a separate SSE connection scoped to one market (`/api/stream/markets/{id}`) to update the live price on the detail page without receiving ticks for every other market.
+- **`correlation`**: `Correlations.tsx` reads the `correlations` array from the hook and prepends new entries to the feed. `Dashboard.tsx` uses the `hasRecentCorrelation` flag (from the REST response, not SSE) to show a lightning bolt "NEWS" badge on affected market cards.
+- **`heartbeat`**: `useEventStream` updates `isConnected = true`. The stats bar on `Dashboard.tsx` shows "Live" or "Offline" based on this flag.
+
+### How Redis pub/sub scales SSE across multiple instances
+
+Without Redis, the system works like this: `SseEventBridge` calls `SseConnectionManager.broadcastPriceUpdate()` directly. Every connected browser gets the event. This works perfectly for a single backend instance.
+
+The problem: if you run two backend instances behind a load balancer, each instance only knows about the SSE clients connected to *it*. Instance A receives the Polymarket WebSocket tick and broadcasts to its clients, but Instance B's clients see nothing — their instance never received the tick.
+
+Redis pub/sub solves this by acting as a shared message bus between instances:
+
+```
+                    Instance A                              Instance B
+                    ──────────                              ──────────
+Polymarket WS ───► PriceIngestionService
+                        │
+                   PriceTickEvent
+                        │
+                   SseEventBridge
+                   (Redis enabled? YES)
+                        │
+                   RedisEventPublisher
+                   .publishPriceUpdate(dto)
+                        │
+                   Serializes PriceUpdateDTO
+                   to JSON string
+                        │
+                        ▼
+              ┌─────────────────────┐
+              │   Redis Server       │
+              │                      │
+              │  Channel:            │
+              │  "polypulse:         │
+              │   price_updates"     │
+              │                      │
+              └──┬──────────────┬───┘
+                 │              │
+                 ▼              ▼
+          RedisEvent      RedisEvent
+          Subscriber      Subscriber
+          (Instance A)    (Instance B)
+                 │              │
+          Deserializes    Deserializes
+          JSON → DTO      JSON → DTO
+                 │              │
+          SseConnection   SseConnection
+          Manager         Manager
+          .broadcast()    .broadcast()
+                 │              │
+                 ▼              ▼
+          Clients on A    Clients on B
+          get the event   get the event
+```
+
+**What gets published:** Two Redis channels carry data:
+- `polypulse:price_updates` — JSON-serialized `PriceUpdateDTO { marketId, price, timestamp }`, published by `SseEventBridge` on every throttled price tick
+- `polypulse:correlations` — JSON-serialized `CorrelationDTO { id, market, news, priceDelta, confidence, reasoning }`, published by `SseEventBridge` on every new correlation
+
+**Who publishes:** `RedisEventPublisher` — called by `SseEventBridge` when `polypulse.redis.enabled=true`. It uses `StringRedisTemplate.convertAndSend()` to serialize the DTO to a JSON string and push it to the channel.
+
+**Who subscribes:** `RedisEventSubscriber` — registered as a `MessageListener` on both channels in `RedisConfig`. It runs on every backend instance. When a message arrives, it reads the raw bytes, deserializes with Jackson `ObjectMapper`, and calls `SseConnectionManager.broadcastPriceUpdate()` or `broadcastCorrelation()` locally.
+
+**Why this exists:** Only one instance has the Polymarket WebSocket connection. Only one instance runs `NewsIngestionService` and `CorrelationEngine`. But any instance might have SSE clients connected. Redis pub/sub ensures that no matter which instance produces the event, all instances broadcast it to their local clients.
+
+**When Redis is disabled:** `SseEventBridge` checks `Optional<RedisEventPublisher>`. If empty, it calls `SseConnectionManager` directly — the event only reaches clients connected to that one instance. This is the default for single-instance deployments (Railway hobby tier).
+
 ### What happens when each component fails
 
 The system is designed so that no single component failure takes down the dashboard. Each subsystem degrades independently:
