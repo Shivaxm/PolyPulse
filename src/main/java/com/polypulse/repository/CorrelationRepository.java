@@ -4,6 +4,7 @@ import com.polypulse.model.Correlation;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -85,4 +86,12 @@ public interface CorrelationRepository extends JpaRepository<Correlation, Long> 
 
     @Query(value = "SELECT count(*) FROM correlations", nativeQuery = true)
     long countAllCorrelations();
+
+    @Modifying
+    @Query(value = "DELETE FROM correlations WHERE detected_at < :cutoff", nativeQuery = true)
+    int deleteOlderThan(@Param("cutoff") Instant cutoff);
+
+    @Modifying
+    @Query(value = "DELETE FROM correlations WHERE news_event_id IN (SELECT id FROM news_events WHERE published_at < :cutoff)", nativeQuery = true)
+    int deleteByNewsOlderThan(@Param("cutoff") Instant cutoff);
 }

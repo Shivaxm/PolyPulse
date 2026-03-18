@@ -105,17 +105,17 @@ public class MarketCacheService {
     }
 
     /**
-     * Purge price_ticks older than 7 days to prevent unbounded table growth.
+     * Purge price_ticks older than 3 days to prevent unbounded table growth.
      * Runs every 6 hours.
      */
     @Scheduled(fixedDelay = 6 * 60 * 60 * 1000, initialDelay = 60_000)
     @Transactional
     public void purgeOldPriceTicks() {
         try {
-            Instant cutoff = Instant.now().minus(Duration.ofDays(7));
+            Instant cutoff = Instant.now().minus(Duration.ofDays(3));
             int deleted = priceTickRepository.deleteOlderThan(cutoff);
             if (deleted > 0) {
-                log.info("Purged {} price_ticks older than 7 days", deleted);
+                log.info("Purged {} price_ticks older than 3 days", deleted);
             }
         } catch (Exception e) {
             log.error("Failed to purge old price_ticks: {}", e.getMessage(), e);
